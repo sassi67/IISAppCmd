@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="IISAppCmd/IISAppCmd.csproj" />
+  <Project Path="IISAppCmd/test/IISAppCmd.Tests.csproj" />
+</Solution>
