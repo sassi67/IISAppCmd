@@ -1,0 +1,12 @@
+<configSchema>
+  <sectionSchema name="system.webServer/modules">
+    <collection addElement="add" clearElement="clear" removeElement="remove">
+		<element name="dynatrace">
+			<collection addElement="config">
+			  <attribute name="appPool" type="string" isUniqueKey="true" />
+			  <attribute name="options" type="string" />
+			</collection>
+		</element>
+	</collection>
+  </sectionSchema>
+</configSchema>
