@@ -17,4 +17,15 @@
     <ProjectReference Include="..\IISAppCmd.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\Resources\applicationHost.config">
+      <Link>Resources\applicationHost.config</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\Resources\IISAgentConfigSchema.xml">
+      <Link>Resources\IISAgentConfigSchema.xml</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>
