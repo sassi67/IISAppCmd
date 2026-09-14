@@ -50,6 +50,15 @@
     <Compile Include="src\IIS\ApplicationPoolFailure.cs" />
     <Compile Include="src\IIS\ApplicationPoolProcessModel.cs" />
     <Compile Include="src\IIS\ApplicationPoolRecycling.cs" />
+    <Compile Include="src\IIS\Site.cs" />
+    <Compile Include="src\IIS\SiteApplication.cs" />
+    <Compile Include="src\IIS\SiteBinding.cs" />
+    <Compile Include="src\IIS\SiteEnums.cs" />
+    <Compile Include="src\IIS\SiteHsts.cs" />
+    <Compile Include="src\IIS\SiteLimits.cs" />
+    <Compile Include="src\IIS\SiteLogFile.cs" />
+    <Compile Include="src\IIS\SiteTraceFailedRequestsLogging.cs" />
+    <Compile Include="src\IIS\SiteVirtualDirectory.cs" />
     <Compile Include="src\Program.cs" />
     <Compile Include="src\Utils.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
