@@ -43,6 +43,13 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="src\IIS\ApplicationPool.cs" />
+    <Compile Include="src\IIS\ApplicationPoolCpu.cs" />
+    <Compile Include="src\IIS\ApplicationPoolEnums.cs" />
+    <Compile Include="src\IIS\ApplicationPoolEnvironmentVariable.cs" />
+    <Compile Include="src\IIS\ApplicationPoolFailure.cs" />
+    <Compile Include="src\IIS\ApplicationPoolProcessModel.cs" />
+    <Compile Include="src\IIS\ApplicationPoolRecycling.cs" />
     <Compile Include="src\Program.cs" />
     <Compile Include="src\Utils.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
