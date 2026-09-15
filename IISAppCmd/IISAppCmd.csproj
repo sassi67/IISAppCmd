@@ -50,6 +50,7 @@
     <Compile Include="src\IIS\ApplicationPoolFailure.cs" />
     <Compile Include="src\IIS\ApplicationPoolProcessModel.cs" />
     <Compile Include="src\IIS\ApplicationPoolRecycling.cs" />
+    <Compile Include="src\IIS\CustomConfig.cs" />
     <Compile Include="src\IIS\GlobalModule.cs" />
     <Compile Include="src\IIS\Site.cs" />
     <Compile Include="src\IIS\SiteApplication.cs" />
