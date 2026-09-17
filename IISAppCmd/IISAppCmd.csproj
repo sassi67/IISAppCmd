@@ -21,6 +21,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- JavaScriptSerializer, which reads the JSON value of the application option. -->
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="Resources\applicationHost.config">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
