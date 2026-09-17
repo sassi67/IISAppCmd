@@ -1,73 +1,25 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+<Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{6CF7C1E4-9BE3-49D0-AE4C-F4FD715CF7EA}</ProjectGuid>
     <OutputType>Exe</OutputType>
+    <TargetFramework>net481</TargetFramework>
     <RootNamespace>IISAppCmd</RootNamespace>
     <AssemblyName>IISAppCmd</AssemblyName>
-    <TargetFrameworkVersion>v4.8.1</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
-    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <Nullable>disable</Nullable>
     <Deterministic>true</Deterministic>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <!-- Properties\AssemblyInfo.cs carries the assembly attributes. -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!-- Keep the documented bin\Debug\IISAppCmd.exe location. -->
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- The test project lives under test\ and must not be compiled into the exe. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);test\**</DefaultItemExcludes>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <PlatformTarget>AnyCPU</PlatformTarget>
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <PlatformTarget>AnyCPU</PlatformTarget>
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
+
   <ItemGroup>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Xml.Linq" />
-    <Reference Include="System.Data.DataSetExtensions" />
-    <Reference Include="Microsoft.CSharp" />
-    <Reference Include="System.Data" />
-    <Reference Include="System.Net.Http" />
-    <Reference Include="System.Xml" />
+    <PackageReference Include="Microsoft.Web.Administration" Version="11.1.0" />
   </ItemGroup>
-  <ItemGroup>
-    <Compile Include="src\IIS\ApplicationPool.cs" />
-    <Compile Include="src\IIS\ApplicationPoolCpu.cs" />
-    <Compile Include="src\IIS\ApplicationPoolEnums.cs" />
-    <Compile Include="src\IIS\ApplicationPoolEnvironmentVariable.cs" />
-    <Compile Include="src\IIS\ApplicationPoolFailure.cs" />
-    <Compile Include="src\IIS\ApplicationPoolProcessModel.cs" />
-    <Compile Include="src\IIS\ApplicationPoolRecycling.cs" />
-    <Compile Include="src\IIS\CustomConfig.cs" />
-    <Compile Include="src\IIS\GlobalModule.cs" />
-    <Compile Include="src\IIS\Site.cs" />
-    <Compile Include="src\IIS\SiteApplication.cs" />
-    <Compile Include="src\IIS\SiteBinding.cs" />
-    <Compile Include="src\IIS\SiteEnums.cs" />
-    <Compile Include="src\IIS\SiteHsts.cs" />
-    <Compile Include="src\IIS\SiteLimits.cs" />
-    <Compile Include="src\IIS\SiteLogFile.cs" />
-    <Compile Include="src\IIS\SiteTraceFailedRequestsLogging.cs" />
-    <Compile Include="src\IIS\SiteVirtualDirectory.cs" />
-    <Compile Include="src\Program.cs" />
-    <Compile Include="src\Utils.cs" />
-    <Compile Include="Properties\AssemblyInfo.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="App.config" />
-  </ItemGroup>
+
   <ItemGroup>
     <None Include="Resources\applicationHost.config">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -76,5 +28,5 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+
 </Project>
