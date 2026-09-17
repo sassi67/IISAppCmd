@@ -16,6 +16,9 @@ namespace IISAppCmd.CommandLine
         /// <summary>Used when --tfm is not given; the only definition of it.</summary>
         public const string DefaultTfm = "netcoreapp3.1";
 
+        /// <summary>Used when --port is not given; the only definition of it.</summary>
+        public const int DefaultPort = 5001;
+
         public Bitness Bitness { get; set; } = DefaultBitness;
 
         /// <summary>
@@ -23,6 +26,18 @@ namespace IISAppCmd.CommandLine
         /// application pool's managed runtime version.
         /// </summary>
         public string Tfm { get; set; } = DefaultTfm;
+
+        /// <summary>Name of the application the site serves, taken from --application.</summary>
+        public string Application { get; set; }
+
+        /// <summary>
+        /// Physical path the site serves, taken from --application and made
+        /// absolute.
+        /// </summary>
+        public string ApplicationPath { get; set; }
+
+        /// <summary>Port the site binds to.</summary>
+        public int Port { get; set; } = DefaultPort;
 
         /// <summary>
         /// Where the working copy of applicationHost.config is written. Null

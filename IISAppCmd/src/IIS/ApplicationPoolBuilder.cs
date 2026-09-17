@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.Web.Administration;
 using IisPool = Microsoft.Web.Administration.ApplicationPool;
+using static IISAppCmd.IIS.ConfigurationWriter;
 
 namespace IISAppCmd.IIS
 {
@@ -208,29 +209,6 @@ namespace IISAppCmd.IIS
                 entry["value"] = variable.Value;
                 collection.Add(entry);
             }
-        }
-
-        /// <summary>
-        /// Writes one attribute, converting the model's CLR type to what the IIS
-        /// configuration system accepts. Null strings are left unset, and an
-        /// attribute the installed IIS schema does not define is skipped rather
-        /// than failing the whole pool on an older Windows.
-        /// </summary>
-        private static void Set(ConfigurationElement element, string name, object value)
-        {
-            if (value == null) return;
-            if (element.Schema.AttributeSchemas[name] == null) return;
-
-            if (value is Enum)
-            {
-                value = Convert.ToInt32(value);
-            }
-            else if (value is uint unsigned)
-            {
-                value = (long)unsigned;
-            }
-
-            element[name] = value;
         }
     }
 }

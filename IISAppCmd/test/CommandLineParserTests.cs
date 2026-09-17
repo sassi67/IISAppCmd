@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using IISAppCmd.CommandLine;
 using NUnit.Framework;
 
@@ -7,10 +8,15 @@ namespace IISAppCmd.Tests
 {
     public class CommandLineParserTests
     {
+        /// <summary>The one required option, so every other case can focus on its own.</summary>
+        private const string ApplicationJson = @"{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}";
+
+        private const string ApplicationPath = @"C:\apps\scratch";
+
         [Test]
-        public void Parse_NoArguments_UsesDefaults()
+        public void Parse_OnlyApplication_UsesDefaults()
         {
-            var result = CommandLineParser.Parse(new string[0]);
+            var result = CommandLineParser.Parse(With());
 
             Assert.Multiple(() =>
             {
@@ -18,8 +24,19 @@ namespace IISAppCmd.Tests
                 Assert.That(result.Error, Is.Null);
                 Assert.That(result.Options.Bitness, Is.EqualTo(Bitness.X64));
                 Assert.That(result.Options.Tfm, Is.EqualTo("netcoreapp3.1"));
+                Assert.That(result.Options.Port, Is.EqualTo(5001));
+                Assert.That(result.Options.Application, Is.EqualTo("Scratch"));
+                Assert.That(result.Options.ApplicationPath, Is.EqualTo(ApplicationPath));
                 Assert.That(result.Options.ConfigPath, Is.Null);
             });
+        }
+
+        [Test]
+        public void Parse_NoArguments_Fails()
+        {
+            var result = CommandLineParser.Parse(new string[0]);
+
+            Assert.That(result.Error, Is.EqualTo("missing required option(s): --application."));
         }
 
         [Test]
@@ -44,13 +61,111 @@ namespace IISAppCmd.Tests
             });
         }
 
+        [TestCase("-ap")]
+        [TestCase("--application")]
+        [TestCase("--APPLICATION")]
+        public void Parse_Application_ReadsNameAndPath(string option)
+        {
+            var result = CommandLineParser.Parse(new[] { option, ApplicationJson });
+
+            Assert.That(result.Error, Is.Null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Options.Application, Is.EqualTo("Scratch"));
+                Assert.That(result.Options.ApplicationPath, Is.EqualTo(ApplicationPath));
+            });
+        }
+
+        [Test]
+        public void Parse_Application_EqualsSeparated()
+        {
+            var result = CommandLineParser.Parse(new[] { "-ap=" + ApplicationJson });
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.Application, Is.EqualTo("Scratch"));
+        }
+
+        [Test]
+        public void Parse_Application_MembersMayComeInAnyOrder()
+        {
+            var result = CommandLineParser.Parse(new[] { "-ap", @"{""path"": ""C:/apps/scratch"", ""name"": ""Scratch""}" });
+
+            Assert.That(result.Error, Is.Null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Options.Application, Is.EqualTo("Scratch"));
+                Assert.That(result.Options.ApplicationPath, Is.EqualTo(ApplicationPath));
+            });
+        }
+
+        [Test]
+        public void Parse_Application_PathIsMadeAbsolute()
+        {
+            var result = CommandLineParser.Parse(new[] { "-ap", @"{""name"": ""Scratch"", ""path"": ""apps/scratch""}" });
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.ApplicationPath, Is.EqualTo(Path.GetFullPath("apps/scratch")));
+            Assert.That(Path.IsPathRooted(result.Options.ApplicationPath), Is.True);
+        }
+
+        [TestCase("not json")]
+        [TestCase(@"{""name"": ""Scratch"",}")]
+        public void Parse_Application_InvalidJson_Fails(string value)
+        {
+            var result = CommandLineParser.Parse(new[] { "-ap", value });
+
+            Assert.That(result.Error, Does.StartWith("--application is not valid JSON"));
+        }
+
+        [TestCase("[1, 2]")]
+        [TestCase("42")]
+        [TestCase(@"""Scratch""")]
+        public void Parse_Application_NotAnObject_Fails(string value)
+        {
+            var result = CommandLineParser.Parse(new[] { "-ap", value });
+
+            Assert.That(result.Error, Is.EqualTo("--application expects a JSON object with a 'name' and a 'path'."));
+        }
+
+        [TestCase(@"{""path"": ""C:/apps/scratch""}", "name")]
+        [TestCase(@"{""name"": ""  "", ""path"": ""C:/apps/scratch""}", "name")]
+        [TestCase(@"{""name"": 7, ""path"": ""C:/apps/scratch""}", "name")]
+        [TestCase(@"{""name"": ""Scratch""}", "path")]
+        [TestCase(@"{""name"": ""Scratch"", ""path"": """"}", "path")]
+        public void Parse_Application_MissingMember_Fails(string value, string member)
+        {
+            var result = CommandLineParser.Parse(new[] { "-ap", value });
+
+            Assert.That(result.Error, Is.EqualTo($"--application is missing a non-empty '{member}'."));
+        }
+
+        [Test]
+        public void Parse_Application_NameWithInvalidCharacter_Fails()
+        {
+            var result = CommandLineParser.Parse(new[] { "-ap", @"{""name"": ""Scra/tch"", ""path"": ""C:/apps/scratch""}" });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Error, Does.StartWith("invalid application name 'Scra/tch'"));
+                Assert.That(result.Error, Does.Contain("'/'"));
+            });
+        }
+
+        [Test]
+        public void Parse_Application_PathWithInvalidCharacters_Fails()
+        {
+            var result = CommandLineParser.Parse(new[] { "-ap", @"{""name"": ""Scratch"", ""path"": ""C:/ap|ps""}" });
+
+            Assert.That(result.Error, Does.StartWith("invalid application path 'C:/ap|ps'"));
+        }
+
         [TestCase("-b", "32", Bitness.X86)]
         [TestCase("-b", "64", Bitness.X64)]
         [TestCase("--bitness", "32", Bitness.X86)]
         [TestCase("--BITNESS", "64", Bitness.X64)]
         public void Parse_Bitness_SpaceSeparated(string option, string value, Bitness expected)
         {
-            var result = CommandLineParser.Parse(new[] { option, value });
+            var result = CommandLineParser.Parse(With(option, value));
 
             Assert.That(result.Error, Is.Null);
             Assert.That(result.Options.Bitness, Is.EqualTo(expected));
@@ -60,7 +175,7 @@ namespace IISAppCmd.Tests
         [TestCase("--bitness=64", Bitness.X64)]
         public void Parse_Bitness_EqualsSeparated(string token, Bitness expected)
         {
-            var result = CommandLineParser.Parse(new[] { token });
+            var result = CommandLineParser.Parse(With(token));
 
             Assert.That(result.Error, Is.Null);
             Assert.That(result.Options.Bitness, Is.EqualTo(expected));
@@ -71,7 +186,7 @@ namespace IISAppCmd.Tests
         [TestCase("640")]
         public void Parse_InvalidBitness_Fails(string value)
         {
-            var result = CommandLineParser.Parse(new[] { "-b", value });
+            var result = CommandLineParser.Parse(With("-b", value));
 
             Assert.That(result.Error, Does.Contain($"invalid bitness '{value}'"));
         }
@@ -85,7 +200,7 @@ namespace IISAppCmd.Tests
         [TestCase("netstandard2.0", "netstandard2.0")]
         public void Parse_ValidTfm_IsLowerCased(string value, string expected)
         {
-            var result = CommandLineParser.Parse(new[] { "--tfm", value });
+            var result = CommandLineParser.Parse(With("--tfm", value));
 
             Assert.That(result.Error, Is.Null);
             Assert.That(result.Options.Tfm, Is.EqualTo(expected));
@@ -97,15 +212,54 @@ namespace IISAppCmd.Tests
         [TestCase("v4.0")]
         public void Parse_InvalidTfm_Fails(string value)
         {
-            var result = CommandLineParser.Parse(new[] { "-t", value });
+            var result = CommandLineParser.Parse(With("-t", value));
 
             Assert.That(result.Error, Does.Contain($"invalid target framework moniker '{value}'"));
+        }
+
+        [TestCase("-p", "8080", 8080)]
+        [TestCase("--port", "1", 1)]
+        [TestCase("--PORT", "65535", 65535)]
+        public void Parse_Port_SpaceSeparated(string option, string value, int expected)
+        {
+            var result = CommandLineParser.Parse(With(option, value));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.Port, Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void Parse_Port_EqualsSeparated()
+        {
+            var result = CommandLineParser.Parse(With("--port=8080"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.Port, Is.EqualTo(8080));
+        }
+
+        [TestCase("http")]
+        [TestCase("80.5")]
+        [TestCase("-1")]
+        public void Parse_NonNumericPort_Fails(string value)
+        {
+            var result = CommandLineParser.Parse(With("--port=" + value));
+
+            Assert.That(result.Error, Is.EqualTo($"invalid port '{value}': expected a whole number."));
+        }
+
+        [TestCase("0")]
+        [TestCase("65536")]
+        public void Parse_PortOutOfRange_Fails(string value)
+        {
+            var result = CommandLineParser.Parse(With("-p", value));
+
+            Assert.That(result.Error, Is.EqualTo($"invalid port '{value}': expected a number between 1 and 65535."));
         }
 
         [Test]
         public void Parse_ConfigPath_IsMadeAbsolute()
         {
-            var result = CommandLineParser.Parse(new[] { "-c", "out.config" });
+            var result = CommandLineParser.Parse(With("-c", "out.config"));
 
             Assert.That(result.Error, Is.Null);
             Assert.That(result.Options.ConfigPath, Is.EqualTo(Path.GetFullPath("out.config")));
@@ -115,7 +269,7 @@ namespace IISAppCmd.Tests
         [Test]
         public void Parse_ConfigPath_ForwardSlashesAreNormalised()
         {
-            var result = CommandLineParser.Parse(new[] { "--config=C:/temp/sub/applicationhost.config" });
+            var result = CommandLineParser.Parse(With("--config=C:/temp/sub/applicationhost.config"));
 
             Assert.That(result.Error, Is.Null);
             Assert.That(result.Options.ConfigPath, Is.EqualTo(@"C:\temp\sub\applicationhost.config"));
@@ -124,7 +278,7 @@ namespace IISAppCmd.Tests
         [Test]
         public void Parse_ConfigPath_WithInvalidCharacters_Fails()
         {
-            var result = CommandLineParser.Parse(new[] { "-c", "out|put.config" });
+            var result = CommandLineParser.Parse(With("-c", "out|put.config"));
 
             Assert.That(result.Error, Does.StartWith("invalid config path"));
         }
@@ -132,19 +286,26 @@ namespace IISAppCmd.Tests
         [Test]
         public void Parse_AllOptions_MixedForms()
         {
-            var result = CommandLineParser.Parse(new[] { "--bitness=32", "-t", "net48", "--config", @"C:\temp\a.config" });
+            var result = CommandLineParser.Parse(new[]
+            {
+                "--bitness=32", "-t", "net48", "-ap", ApplicationJson, "--port", "8080", "--config", @"C:\temp\a.config",
+            });
 
             Assert.That(result.Error, Is.Null);
             Assert.Multiple(() =>
             {
                 Assert.That(result.Options.Bitness, Is.EqualTo(Bitness.X86));
                 Assert.That(result.Options.Tfm, Is.EqualTo("net48"));
+                Assert.That(result.Options.Application, Is.EqualTo("Scratch"));
+                Assert.That(result.Options.ApplicationPath, Is.EqualTo(ApplicationPath));
+                Assert.That(result.Options.Port, Is.EqualTo(8080));
                 Assert.That(result.Options.ConfigPath, Is.EqualTo(@"C:\temp\a.config"));
             });
         }
 
         [TestCase("-b", "32", "--bitness", "64", "--bitness")]
         [TestCase("-t", "net8.0", "-t=net9.0", null, "--tfm")]
+        [TestCase("-p", "8080", "--port", "8081", "--port")]
         [TestCase("-c", "a.config", "--config", "b.config", "--config")]
         public void Parse_DuplicateOption_Fails(string first, string firstValue, string second, string secondValue, string canonical)
         {
@@ -157,9 +318,17 @@ namespace IISAppCmd.Tests
             Assert.That(result.Error, Is.EqualTo($"option '{canonical}' was specified more than once."));
         }
 
+        [Test]
+        public void Parse_DuplicateApplication_Fails()
+        {
+            var result = CommandLineParser.Parse(new[] { "-ap", ApplicationJson, "--application", ApplicationJson });
+
+            Assert.That(result.Error, Is.EqualTo("option '--application' was specified more than once."));
+        }
+
         [TestCase("-x")]
-        [TestCase("--port")]
         [TestCase("--reference=Foo")]
+        [TestCase("--enable-iis-agent")]
         public void Parse_UnknownOption_Fails(string token)
         {
             var result = CommandLineParser.Parse(new[] { token });
@@ -204,11 +373,17 @@ namespace IISAppCmd.Tests
         {
             Assert.Multiple(() =>
             {
+                Assert.That(CommandLineParser.HelpText, Does.Contain("--application"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--bitness"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--tfm"));
+                Assert.That(CommandLineParser.HelpText, Does.Contain("--port"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--config"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--help"));
             });
         }
+
+        /// <summary>The given arguments, preceded by the required --application.</summary>
+        private static string[] With(params string[] args) =>
+            new[] { "-ap", ApplicationJson }.Concat(args).ToArray();
     }
 }

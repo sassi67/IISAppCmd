@@ -35,6 +35,9 @@ namespace IISAppCmd
 
             Console.WriteLine($"bitness     : {(int)options.Bitness}");
             Console.WriteLine($"tfm         : {options.Tfm}");
+            Console.WriteLine($"application : {options.Application}");
+            Console.WriteLine($"path        : {options.ApplicationPath}");
+            Console.WriteLine($"port        : {options.Port}");
 
             string configPath = options.ConfigPath ?? ApplicationHostConfig.DefaultWorkingCopyPath(id);
 
@@ -47,16 +50,30 @@ namespace IISAppCmd
             Console.WriteLine($"Working configuration: {configPath}");
 
             IIS.ApplicationPool pool = ApplicationPoolFactory.FromCommandLine(options, id);
+            IIS.Site site = SiteFactory.FromCommandLine(options, id);
+
+            if (!Directory.Exists(options.ApplicationPath))
+            {
+                Console.Error.WriteLine($"warning: the physical path '{options.ApplicationPath}' does not exist.");
+            }
 
             try
             {
                 using (ServerManager manager = new ServerManager(configPath))
                 {
-                    var builder = new ApplicationPoolBuilder(pool, manager, configPath);
+                    var poolBuilder = new ApplicationPoolBuilder(pool, manager, configPath);
 
-                    if (!builder.Build(out string poolError))
+                    if (!poolBuilder.Build(out string poolError))
                     {
                         Console.Error.WriteLine($"error: {poolError}");
+                        return (int)ExitCode.ConfigurationError;
+                    }
+
+                    var siteBuilder = new SiteBuilder(site, manager, pool, configPath);
+
+                    if (!siteBuilder.Build(out string siteError))
+                    {
+                        Console.Error.WriteLine($"error: {siteError}");
                         return (int)ExitCode.ConfigurationError;
                     }
 
@@ -71,6 +88,7 @@ namespace IISAppCmd
             }
 
             Console.WriteLine($"Added application pool: {pool.Name}");
+            Console.WriteLine($"Added site: {site.Name} -> http://localhost:{options.Port}/");
             return (int)ExitCode.Success;
         }
     }
