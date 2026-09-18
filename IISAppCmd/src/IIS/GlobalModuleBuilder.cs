@@ -18,9 +18,10 @@ namespace IISAppCmd.IIS
     /// module declared but not enabled would never run. Changes are left
     /// uncommitted so the caller can batch them with the rest of its edits.
     /// <para>
-    /// The <see cref="CustomConfig"/> the module carries is written separately,
-    /// by <see cref="BuildCustomConfig"/>, once those changes have been
-    /// committed.
+    /// The <see cref="CustomConfig"/> the module carries goes the same way when
+    /// the machine knows Resources\IISAgentConfigSchema.xml. When it does not,
+    /// <see cref="Build"/> leaves the section to <see cref="BuildCustomConfig"/>,
+    /// which writes it as XML once those changes have been committed.
     /// </para>
     /// </summary>
     public sealed class GlobalModuleBuilder
@@ -63,6 +64,15 @@ namespace IISAppCmd.IIS
         public string ConfigPath { get; }
 
         /// <summary>
+        /// True once <see cref="Build"/> has written the custom section through
+        /// the <see cref="ServerManager"/>, which it does when the IIS
+        /// configuration system knows the schema of that section. It then
+        /// travels with everything else to the caller's commit, and
+        /// <see cref="BuildCustomConfig"/> has nothing left to do.
+        /// </summary>
+        public bool CustomConfigWritten { get; private set; }
+
+        /// <summary>
         /// Adds the module to the globalModules and modules collections, or
         /// updates both entries when a module of that name is already there,
         /// without committing.
@@ -94,20 +104,21 @@ namespace IISAppCmd.IIS
         /// <summary>
         /// Writes the custom section into the entry the module has in
         /// &lt;modules&gt;, leaving the rest of the file as it was. Does nothing
-        /// when the module carries no custom section.
+        /// when the module carries no custom section, or when
+        /// <see cref="Build"/> has already written it through the
+        /// <see cref="ServerManager"/>.
         /// <para>
-        /// The section is written as XML rather than through the
-        /// <see cref="ServerManager"/>, and only once the caller has committed,
-        /// because the IIS configuration system knows nothing of
-        /// Resources\IISAgentConfigSchema.xml unless the agent installed it, and
-        /// refuses both to write and to read an element it has no schema for. A
-        /// <c>CommitChanges()</c> after this one would be reading a file its
-        /// schema can no longer parse.
+        /// This is the way out for a machine where the custom schema is not
+        /// installed: the IIS configuration system refuses both to write and to
+        /// read an element it has no schema for, so the section is written as
+        /// XML instead, and only once the caller has committed. Nothing may open
+        /// the file through a <see cref="ServerManager"/> afterwards, since that
+        /// would be reading a file its schema cannot parse.
         /// </para>
         /// </summary>
         public bool BuildCustomConfig(out string error)
         {
-            if (_customConfig == null)
+            if (_customConfig == null || CustomConfigWritten)
             {
                 error = string.Empty;
                 return true;
@@ -209,6 +220,66 @@ namespace IISAppCmd.IIS
             ConfigurationElement entry = Find(modules, _module.Name) ?? Add(modules);
 
             Set(entry, "preCondition", _module.PreCondition);
+
+            CustomConfigWritten = TryWriteCustomConfig(entry);
+        }
+
+        /// <summary>
+        /// Writes the custom section into the entry of the module through the
+        /// IIS configuration system, which only knows it once
+        /// IISAgentConfigSchema.xml has been installed into
+        /// %windir%\system32\inetsrv\config\schema, the one schema directory
+        /// Microsoft.Web.Administration reads. Returns false when it does not,
+        /// leaving the section to <see cref="BuildCustomConfig"/>.
+        /// </summary>
+        private bool TryWriteCustomConfig(ConfigurationElement entry)
+        {
+            if (_customConfig == null)
+            {
+                return false;
+            }
+
+            ConfigurationElement section = Child(entry, CustomSectionElement);
+
+            if (section == null)
+            {
+                return false;
+            }
+
+            ConfigurationElementCollection entries = section.GetCollection();
+
+            // appPool is the key of the collection, so a section for that pool is
+            // updated rather than written twice.
+            ConfigurationElement config = FindByAppPool(entries);
+
+            if (config == null)
+            {
+                config = entries.CreateElement(CustomSectionEntry);
+                config["appPool"] = _customConfig.AppPool;
+                entries.Add(config);
+            }
+
+            config["options"] = _customConfig.Options;
+            return true;
+        }
+
+        /// <summary>The entry of the custom section for that application pool, or null.</summary>
+        private ConfigurationElement FindByAppPool(ConfigurationElementCollection collection)
+        {
+            foreach (ConfigurationElement element in collection)
+            {
+                if (!string.Equals(element.ElementTagName, CustomSectionEntry, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (string.Equals(element["appPool"] as string, _customConfig.AppPool, StringComparison.OrdinalIgnoreCase))
+                {
+                    return element;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>Appends an entry for the module, named after it.</summary>

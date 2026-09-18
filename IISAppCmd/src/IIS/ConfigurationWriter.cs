@@ -39,7 +39,16 @@ namespace IISAppCmd.IIS
         /// </summary>
         public static ConfigurationElement Child(ConfigurationElement element, string name)
         {
-            foreach (ConfigurationElementSchema schema in element.Schema.ChildElementSchemas)
+            // An element the schema gives no children at all carries no
+            // collection of child element schemas, not an empty one.
+            ConfigurationElementSchemaCollection children = element.Schema?.ChildElementSchemas;
+
+            if (children == null)
+            {
+                return null;
+            }
+
+            foreach (ConfigurationElementSchema schema in children)
             {
                 if (string.Equals(schema.Name, name, StringComparison.OrdinalIgnoreCase))
                 {

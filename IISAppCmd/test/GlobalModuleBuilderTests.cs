@@ -241,9 +241,33 @@ namespace IISAppCmd.Tests
         }
 
         [Test]
+        public void Build_WritesTheSectionItselfWhenTheMachineKnowsTheSchema()
+        {
+            GlobalModuleBuilder builder = BuildAndCommitModuleOnly(NewModule("MyModule"), NewCustomConfig());
+
+            bool committedWithTheSection = FindIn(Modules(), "MyModule").Element("dynatrace") != null;
+
+            Assert.That(
+                committedWithTheSection,
+                Is.EqualTo(builder.CustomConfigWritten),
+                "the section is in the committed file exactly when the ServerManager was able to write it");
+
+            // Whichever way it went in, the step after the commit leaves one
+            // section behind, not two.
+            Assert.That(builder.BuildCustomConfig(out string error), Is.True, error);
+
+            XElement section = FindIn(Modules(), "MyModule").Element("dynatrace");
+            Assert.That(section, Is.Not.Null);
+            Assert.That(Attribute(section.Elements("config").Single(), "options"), Is.EqualTo(Options));
+        }
+
+        [Test]
         public void BuildCustomConfig_WritesTheSectionTheWayTheRestOfTheFileIsWritten()
         {
-            BuildAndCommit(NewModule("MyModule"), NewCustomConfig());
+            GlobalModuleBuilder builder = BuildAndCommitModuleOnly(NewModule("MyModule"), NewCustomConfig());
+            AssumeTheSectionIsWrittenAsXml(builder);
+
+            Assert.That(builder.BuildCustomConfig(out string error), Is.True, error);
 
             Assert.That(File.ReadAllText(_configPath), Does.Contain(ExpectedSection()));
         }
@@ -252,6 +276,7 @@ namespace IISAppCmd.Tests
         public void BuildCustomConfig_ChangesNothingElseInTheFile()
         {
             GlobalModuleBuilder builder = BuildAndCommitModuleOnly(NewModule("MyModule"), NewCustomConfig());
+            AssumeTheSectionIsWrittenAsXml(builder);
 
             byte[] committed = File.ReadAllBytes(_configPath);
             Assert.That(builder.BuildCustomConfig(out string error), Is.True, error);
@@ -431,6 +456,17 @@ namespace IISAppCmd.Tests
 
             return builder;
         }
+
+        /// <summary>
+        /// Holds the test to the machines the section is written as XML on. On
+        /// one whose IIS configuration system has the custom schema installed,
+        /// the ServerManager writes it, and its layout is none of our doing.
+        /// </summary>
+        private static void AssumeTheSectionIsWrittenAsXml(GlobalModuleBuilder builder) =>
+            Assume.That(
+                builder.CustomConfigWritten,
+                Is.False,
+                "the ServerManager wrote the section, so there is no XML of ours to check");
 
         /// <summary>The custom section of the smallest run that asks for one.</summary>
         private static CustomConfig NewCustomConfig() => new CustomConfig

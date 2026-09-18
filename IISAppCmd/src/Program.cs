@@ -103,9 +103,10 @@ namespace IISAppCmd
                     manager.CommitChanges();
                 }
 
-                // The custom section follows the commit: its schema is not one
-                // the IIS configuration system knows, so it is written as XML
-                // and nothing may read the file through that system afterwards.
+                // Nothing left to do when the custom section went in with the
+                // rest; on a machine whose IIS configuration system has no
+                // schema for it, it is written as XML here instead, and nothing
+                // may read the file through that system afterwards.
                 if (moduleBuilder != null && !moduleBuilder.BuildCustomConfig(out string customError))
                 {
                     Console.Error.WriteLine($"error: {customError}");
