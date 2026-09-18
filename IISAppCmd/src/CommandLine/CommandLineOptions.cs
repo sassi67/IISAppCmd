@@ -61,6 +61,20 @@
         public string GlobalModulePreCondition { get; set; }
 
         /// <summary>
+        /// Settings of the custom section the global module carries, taken from
+        /// --customconfig. Null when the option was not given, in which case the
+        /// module is written without one.
+        /// </summary>
+        public string CustomConfigOptions { get; set; }
+
+        /// <summary>
+        /// Application pool the custom section applies to, taken from
+        /// --customconfig. Null when the value named none, in which case the
+        /// pool this run creates is the one it applies to.
+        /// </summary>
+        public string CustomConfigAppPool { get; set; }
+
+        /// <summary>
         /// Where the working copy of applicationHost.config is written. Null
         /// when --config was not given, in which case the default scratch
         /// location is used.
