@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -18,13 +18,16 @@ namespace IISAppCmd.CommandLine
 into a copy of applicationHost.config.
 
 Usage:
-  IISAppCmd -ap <json> [-gm <json>] [-b <32|64>] [-t <tfm>] [-p <port>] [-c <path>]
+  IISAppCmd -ap <json> [-gm <json>] [-cc <json>] [-b <32|64>] [-t <tfm>] [-p <port>] [-c <path>]
 
 Options:
   -ap,  --application  <json>   Application the site serves, as
                                 {""name"": ""..."", ""path"": ""...""}. Required.
   -gm,  --globalmodule <json>   Native module to register, as {""name"": ""..."",
                                 ""image"": ""..."", ""preCondition"": ""...""}.
+  -cc,  --customconfig <json>   Custom section of that module, as
+                                {""appPool"": ""..."", ""options"": ""...""}.
+                                Needs --globalmodule.
   -b,   --bitness      <32|64>  Bitness of the worker process. Default 64.
   -t,   --tfm          <tfm>    Framework the application targets. Default netcoreapp3.1.
   -p,   --port         <number> Port the site listens on, 1-65535. Default 5001.
@@ -48,6 +51,12 @@ the image are required; without a preCondition the bitness of the run supplies
 one. The image is kept as written, so it may name its DLL through an
 environment variable such as %windir%.
 
+--customconfig carries the custom section Resources\IISAgentConfigSchema.xml
+defines for a module: the options the agent is given, and the application pool
+they apply to. Only the options are required; without an appPool the pool this
+run creates is the one they apply to. The section is written inside the entry
+the module has in <modules>, so it only makes sense next to --globalmodule.
+
 --bitness decides whether the pool runs 32-bit (enable32BitAppOnWin64) or
 64-bit, and which preCondition a global module without one is given,
 bitness32 or bitness64.
@@ -66,7 +75,8 @@ Examples:
   IISAppCmd --application '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' --port 8080
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -b 32 -t net48
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -c C:\temp\a.config
-  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -gm '{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}'";
+  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -gm '{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}'
+  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -gm '{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}' -cc '{""options"": ""tenant=abc,loglevelcon=info""}'";
 
         private static readonly Regex TfmPattern = new Regex(
             @"^(net\d+\.\d+(-[a-z][a-z0-9.]*)?|net\d{2,3}|netcoreapp\d+\.\d+|netstandard\d+\.\d+)$",
@@ -81,6 +91,7 @@ Examples:
             string port = null;
             string application = null;
             string globalModule = null;
+            string customConfig = null;
             string config = null;
 
             for (int i = 0; i < args.Length; i++)
@@ -119,6 +130,10 @@ Examples:
                     case "gm":
                     case "globalmodule":
                         canonical = "globalmodule";
+                        break;
+                    case "cc":
+                    case "customconfig":
+                        canonical = "customconfig";
                         break;
                     case "c":
                     case "config":
@@ -160,6 +175,9 @@ Examples:
                         break;
                     case "globalmodule":
                         duplicate = Assign(ref globalModule, value);
+                        break;
+                    case "customconfig":
+                        duplicate = Assign(ref customConfig, value);
                         break;
                     default:
                         duplicate = Assign(ref config, value);
@@ -205,6 +223,24 @@ Examples:
                 !ReadInlineGlobalModule(globalModule, out moduleName, out moduleImage, out modulePreCondition, out string moduleError))
             {
                 return ParseResult.Fail(moduleError);
+            }
+
+            string customOptions = null;
+            string customAppPool = null;
+
+            if (customConfig != null)
+            {
+                // The section lives inside the entry the module has in
+                // <modules>, so without a module there is nowhere to put it.
+                if (globalModule == null)
+                {
+                    return ParseResult.Fail("--customconfig needs --globalmodule: the section is written into that module.");
+                }
+
+                if (!ReadInlineCustomConfig(customConfig, out customOptions, out customAppPool, out string customError))
+                {
+                    return ParseResult.Fail(customError);
+                }
             }
 
             if (bitness != null && bitness != "32" && bitness != "64")
@@ -255,6 +291,8 @@ Examples:
                 GlobalModule = moduleName,
                 GlobalModuleImage = moduleImage,
                 GlobalModulePreCondition = modulePreCondition,
+                CustomConfigOptions = customOptions,
+                CustomConfigAppPool = customAppPool,
                 ConfigPath = config,
             });
         }
@@ -360,6 +398,53 @@ Examples:
             if (members.ContainsKey("preCondition") && !TryReadText(members, "preCondition", out preCondition))
             {
                 error = "--globalmodule has an empty 'preCondition'.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        /// <summary>
+        /// Reads the inline --customconfig value, whose members are the two
+        /// attributes Resources\IISAgentConfigSchema.xml gives the custom
+        /// section: a required options, and an optional appPool.
+        /// </summary>
+        private static bool ReadInlineCustomConfig(string value, out string options, out string appPool, out string error)
+        {
+            options = null;
+            appPool = null;
+
+            object parsed;
+
+            try
+            {
+                parsed = new JavaScriptSerializer().DeserializeObject(value);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
+            {
+                error = $"--customconfig is not valid JSON: {ex.Message}";
+                return false;
+            }
+
+            if (!(parsed is Dictionary<string, object> members))
+            {
+                error = "--customconfig expects a JSON object with an 'options'.";
+                return false;
+            }
+
+            if (!TryReadText(members, "options", out options))
+            {
+                error = "--customconfig is missing a non-empty 'options'.";
+                return false;
+            }
+
+            // The appPool is optional: without one the pool this run creates is
+            // the one the section applies to, so only a present-but-empty value
+            // is a mistake.
+            if (members.ContainsKey("appPool") && !TryReadText(members, "appPool", out appPool))
+            {
+                error = "--customconfig has an empty 'appPool'.";
                 return false;
             }
 

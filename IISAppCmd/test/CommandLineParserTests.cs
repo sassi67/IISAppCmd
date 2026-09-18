@@ -15,6 +15,8 @@ namespace IISAppCmd.Tests
 
         private const string GlobalModuleJson = @"{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}";
 
+        private const string CustomConfigJson = @"{""options"": ""tenant=abc,loglevelcon=info""}";
+
         [Test]
         public void Parse_OnlyApplication_UsesDefaults()
         {
@@ -32,6 +34,8 @@ namespace IISAppCmd.Tests
                 Assert.That(result.Options.GlobalModule, Is.Null);
                 Assert.That(result.Options.GlobalModuleImage, Is.Null);
                 Assert.That(result.Options.GlobalModulePreCondition, Is.Null);
+                Assert.That(result.Options.CustomConfigOptions, Is.Null);
+                Assert.That(result.Options.CustomConfigAppPool, Is.Null);
                 Assert.That(result.Options.ConfigPath, Is.Null);
             });
         }
@@ -282,6 +286,97 @@ namespace IISAppCmd.Tests
             Assert.That(result.Error, Is.EqualTo("option '--globalmodule' was specified more than once."));
         }
 
+        [TestCase("-cc")]
+        [TestCase("--customconfig")]
+        [TestCase("--CUSTOMCONFIG")]
+        public void Parse_CustomConfig_ReadsTheOptions(string option)
+        {
+            var result = CommandLineParser.Parse(WithModule(option, CustomConfigJson));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Options.CustomConfigOptions, Is.EqualTo("tenant=abc,loglevelcon=info"));
+                Assert.That(result.Options.CustomConfigAppPool, Is.Null, "without one the pool the run creates is used");
+            });
+        }
+
+        [Test]
+        public void Parse_CustomConfig_EqualsSeparated()
+        {
+            var result = CommandLineParser.Parse(WithModule("-cc=" + CustomConfigJson));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.CustomConfigOptions, Is.EqualTo("tenant=abc,loglevelcon=info"));
+        }
+
+        [Test]
+        public void Parse_CustomConfig_ReadsTheAppPool()
+        {
+            var result = CommandLineParser.Parse(WithModule(
+                "-cc", @"{""appPool"": ""DefaultAppPool"", ""options"": ""tenant=abc""}"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Options.CustomConfigAppPool, Is.EqualTo("DefaultAppPool"));
+                Assert.That(result.Options.CustomConfigOptions, Is.EqualTo("tenant=abc"));
+            });
+        }
+
+        [Test]
+        public void Parse_CustomConfig_WithoutGlobalModule_Fails()
+        {
+            var result = CommandLineParser.Parse(With("-cc", CustomConfigJson));
+
+            Assert.That(result.Error, Is.EqualTo("--customconfig needs --globalmodule: the section is written into that module."));
+        }
+
+        [TestCase("not json")]
+        [TestCase(@"{""options"": ""tenant=abc"",}")]
+        public void Parse_CustomConfig_InvalidJson_Fails(string value)
+        {
+            var result = CommandLineParser.Parse(WithModule("-cc", value));
+
+            Assert.That(result.Error, Does.StartWith("--customconfig is not valid JSON"));
+        }
+
+        [TestCase("[1, 2]")]
+        [TestCase("42")]
+        [TestCase(@"""tenant=abc""")]
+        public void Parse_CustomConfig_NotAnObject_Fails(string value)
+        {
+            var result = CommandLineParser.Parse(WithModule("-cc", value));
+
+            Assert.That(result.Error, Is.EqualTo("--customconfig expects a JSON object with an 'options'."));
+        }
+
+        [TestCase(@"{""appPool"": ""DefaultAppPool""}")]
+        [TestCase(@"{""options"": ""  ""}")]
+        [TestCase(@"{""options"": 7}")]
+        public void Parse_CustomConfig_MissingOptions_Fails(string value)
+        {
+            var result = CommandLineParser.Parse(WithModule("-cc", value));
+
+            Assert.That(result.Error, Is.EqualTo("--customconfig is missing a non-empty 'options'."));
+        }
+
+        [Test]
+        public void Parse_CustomConfig_EmptyAppPool_Fails()
+        {
+            var result = CommandLineParser.Parse(WithModule("-cc", @"{""appPool"": """", ""options"": ""tenant=abc""}"));
+
+            Assert.That(result.Error, Is.EqualTo("--customconfig has an empty 'appPool'."));
+        }
+
+        [Test]
+        public void Parse_DuplicateCustomConfig_Fails()
+        {
+            var result = CommandLineParser.Parse(WithModule("-cc", CustomConfigJson, "--customconfig", CustomConfigJson));
+
+            Assert.That(result.Error, Is.EqualTo("option '--customconfig' was specified more than once."));
+        }
+
         [TestCase("-b", "32", Bitness.X86)]
         [TestCase("-b", "64", Bitness.X64)]
         [TestCase("--bitness", "32", Bitness.X86)]
@@ -412,7 +507,7 @@ namespace IISAppCmd.Tests
             var result = CommandLineParser.Parse(new[]
             {
                 "--bitness=32", "-t", "net48", "-ap", ApplicationJson, "--port", "8080",
-                "-gm=" + GlobalModuleJson, "--config", @"C:\temp\a.config",
+                "-gm=" + GlobalModuleJson, "--customconfig", CustomConfigJson, "--config", @"C:\temp\a.config",
             });
 
             Assert.That(result.Error, Is.Null);
@@ -425,6 +520,7 @@ namespace IISAppCmd.Tests
                 Assert.That(result.Options.Port, Is.EqualTo(8080));
                 Assert.That(result.Options.GlobalModule, Is.EqualTo("MyModule"));
                 Assert.That(result.Options.GlobalModuleImage, Is.EqualTo("C:/modules/my.dll"));
+                Assert.That(result.Options.CustomConfigOptions, Is.EqualTo("tenant=abc,loglevelcon=info"));
                 Assert.That(result.Options.ConfigPath, Is.EqualTo(@"C:\temp\a.config"));
             });
         }
@@ -501,6 +597,7 @@ namespace IISAppCmd.Tests
             {
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--application"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--globalmodule"));
+                Assert.That(CommandLineParser.HelpText, Does.Contain("--customconfig"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--bitness"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--tfm"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--port"));
@@ -512,5 +609,9 @@ namespace IISAppCmd.Tests
         /// <summary>The given arguments, preceded by the required --application.</summary>
         private static string[] With(params string[] args) =>
             new[] { "-ap", ApplicationJson }.Concat(args).ToArray();
+
+        /// <summary>The given arguments, preceded by --application and the module the custom section needs.</summary>
+        private static string[] WithModule(params string[] args) =>
+            With(new[] { "-gm", GlobalModuleJson }.Concat(args).ToArray());
     }
 }

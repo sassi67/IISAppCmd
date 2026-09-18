@@ -39,6 +39,7 @@ namespace IISAppCmd
             Console.WriteLine($"path        : {options.ApplicationPath}");
             Console.WriteLine($"port        : {options.Port}");
             Console.WriteLine($"module      : {options.GlobalModule ?? "(none)"}");
+            Console.WriteLine($"options     : {options.CustomConfigOptions ?? "(none)"}");
 
             string configPath = options.ConfigPath ?? ApplicationHostConfig.DefaultWorkingCopyPath(id);
 
@@ -56,10 +57,16 @@ namespace IISAppCmd
             // Null unless --globalmodule asked for one.
             GlobalModule module = GlobalModuleFactory.FromCommandLine(options);
 
+            // The section goes into that module, and the parser only accepts
+            // --customconfig next to --globalmodule.
+            CustomConfig customConfig = module == null ? null : CustomConfigFactory.FromCommandLine(options, id);
+
             if (!Directory.Exists(options.ApplicationPath))
             {
                 Console.Error.WriteLine($"warning: the physical path '{options.ApplicationPath}' does not exist.");
             }
+
+            GlobalModuleBuilder moduleBuilder = null;
 
             try
             {
@@ -83,7 +90,7 @@ namespace IISAppCmd
 
                     if (module != null)
                     {
-                        var moduleBuilder = new GlobalModuleBuilder(module, manager, configPath);
+                        moduleBuilder = new GlobalModuleBuilder(module, manager, customConfig, configPath);
 
                         if (!moduleBuilder.Build(out string moduleError))
                         {
@@ -94,6 +101,15 @@ namespace IISAppCmd
 
                     // Single commit point for every edit made to the copied configuration.
                     manager.CommitChanges();
+                }
+
+                // The custom section follows the commit: its schema is not one
+                // the IIS configuration system knows, so it is written as XML
+                // and nothing may read the file through that system afterwards.
+                if (moduleBuilder != null && !moduleBuilder.BuildCustomConfig(out string customError))
+                {
+                    Console.Error.WriteLine($"error: {customError}");
+                    return (int)ExitCode.ConfigurationError;
                 }
             }
             catch (Exception ex) when (ex is COMException || ex is IOException || ex is UnauthorizedAccessException)
@@ -108,6 +124,11 @@ namespace IISAppCmd
             if (module != null)
             {
                 Console.WriteLine($"Added global module: {module.Name} ({module.Image})");
+            }
+
+            if (customConfig != null)
+            {
+                Console.WriteLine($"Added custom section: {customConfig.AppPool} -> {customConfig.Options}");
             }
 
             return (int)ExitCode.Success;

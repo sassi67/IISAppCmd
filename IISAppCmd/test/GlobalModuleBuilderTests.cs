@@ -1,6 +1,7 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Xml.Linq;
 using IISAppCmd.Config;
 using IISAppCmd.IIS;
@@ -18,6 +19,16 @@ namespace IISAppCmd.Tests
 
         /// <summary>A module the bundled configuration already declares.</summary>
         private const string BundledModule = "IISNativeModule";
+
+        private const string AppPool = "AppPool_tests";
+
+        private const string Options = "tenant=abc,loglevelcon=info";
+
+        /// <summary>The indentation the entries of &lt;modules&gt; sit on.</summary>
+        private const string EntryIndent = "            ";
+
+        /// <summary>The entry of the module before it carries a custom section.</summary>
+        private const string ClosedEntry = @"<add name=""MyModule"" preCondition=""bitness64"" />";
 
         private string _scratch;
         private string _configPath;
@@ -173,7 +184,7 @@ namespace IISAppCmd.Tests
         {
             using (var manager = new ServerManager(_configPath))
             {
-                var builder = new GlobalModuleBuilder(NewModule("MyModule"), manager, _configPath);
+                var builder = new GlobalModuleBuilder(NewModule("MyModule"), manager, null, _configPath);
                 Assert.That(builder.Build(out string error), Is.True, error);
             }
 
@@ -206,11 +217,150 @@ namespace IISAppCmd.Tests
         }
 
         [Test]
+        public void BuildCustomConfig_WritesTheSectionIntoTheEntryOfTheModule()
+        {
+            BuildAndCommit(NewModule("MyModule"), NewCustomConfig());
+
+            XElement section = FindIn(Modules(), "MyModule").Element("dynatrace");
+            Assert.That(section, Is.Not.Null, "the custom section is written into the <add> of the module");
+            XElement config = section.Elements("config").Single();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(Attribute(config, "appPool"), Is.EqualTo(AppPool));
+                Assert.That(Attribute(config, "options"), Is.EqualTo(Options));
+            });
+        }
+
+        [Test]
+        public void BuildCustomConfig_LeavesTheDeclarationInGlobalModulesAlone()
+        {
+            BuildAndCommit(NewModule("MyModule"), NewCustomConfig());
+
+            Assert.That(FindIn(GlobalModules(), "MyModule").Elements(), Is.Empty, "only <modules> carries the custom section");
+        }
+
+        [Test]
+        public void BuildCustomConfig_WritesTheSectionTheWayTheRestOfTheFileIsWritten()
+        {
+            BuildAndCommit(NewModule("MyModule"), NewCustomConfig());
+
+            Assert.That(File.ReadAllText(_configPath), Does.Contain(ExpectedSection()));
+        }
+
+        [Test]
+        public void BuildCustomConfig_ChangesNothingElseInTheFile()
+        {
+            GlobalModuleBuilder builder = BuildAndCommitModuleOnly(NewModule("MyModule"), NewCustomConfig());
+
+            byte[] committed = File.ReadAllBytes(_configPath);
+            Assert.That(builder.BuildCustomConfig(out string error), Is.True, error);
+            byte[] written = File.ReadAllBytes(_configPath);
+
+            // Putting the entry back the way the IIS configuration system left
+            // it has to give the committed file again, byte for byte.
+            string restored = Encoding.UTF8.GetString(written).Replace(ExpectedSection(), ClosedEntry);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(restored, Is.EqualTo(Encoding.UTF8.GetString(committed)));
+                Assert.That(written[0], Is.EqualTo((byte)'<'), "no byte order mark is added");
+            });
+        }
+
+        [Test]
+        public void BuildCustomConfig_WithoutASection_WritesNothing()
+        {
+            BuildAndCommit(NewModule("MyModule"));
+
+            Assert.That(XDocument.Load(_configPath).Descendants("dynatrace"), Is.Empty);
+        }
+
+        [Test]
+        public void BuildCustomConfig_Twice_UpdatesTheSameSection()
+        {
+            BuildAndCommit(NewModule("MyModule"), NewCustomConfig());
+
+            GlobalModuleBuilder builder = BuildAndCommitModuleOnly(
+                NewModule("MyModule"),
+                new CustomConfig { AppPool = AppPool, Options = "tenant=other" },
+                buildModule: false);
+
+            Assert.That(builder.BuildCustomConfig(out string error), Is.True, error);
+
+            XElement section = FindIn(Modules(), "MyModule").Element("dynatrace");
+            Assert.Multiple(() =>
+            {
+                Assert.That(section.Elements("config").Count(), Is.EqualTo(1), "appPool is the key of the section");
+                Assert.That(Attribute(section.Elements("config").Single(), "options"), Is.EqualTo("tenant=other"));
+            });
+        }
+
+        [Test]
+        public void BuildCustomConfig_ForAnotherPool_IsWrittenBesideTheFirst()
+        {
+            BuildAndCommit(NewModule("MyModule"), NewCustomConfig());
+
+            GlobalModuleBuilder builder = BuildAndCommitModuleOnly(
+                NewModule("MyModule"),
+                new CustomConfig { AppPool = "AppPool_other", Options = "tenant=other" },
+                buildModule: false);
+
+            Assert.That(builder.BuildCustomConfig(out string error), Is.True, error);
+
+            var entries = FindIn(Modules(), "MyModule").Element("dynatrace").Elements("config")
+                .Select(e => Attribute(e, "appPool"))
+                .ToList();
+
+            Assert.That(entries, Is.EqualTo(new[] { AppPool, "AppPool_other" }));
+        }
+
+        [Test]
+        public void BuildCustomConfig_WithoutTheModuleInTheFile_Fails()
+        {
+            using (var manager = new ServerManager(_configPath))
+            {
+                var builder = new GlobalModuleBuilder(NewModule("MyModule"), manager, NewCustomConfig(), _configPath);
+
+                bool ok = builder.BuildCustomConfig(out string error);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(ok, Is.False);
+                    Assert.That(error, Does.Contain("the global module 'MyModule' is not in <modules>"));
+                    Assert.That(error, Does.Contain(_configPath));
+                });
+            }
+        }
+
+        [TestCase("")]
+        [TestCase(null)]
+        [TestCase("   ")]
+        public void Build_SectionWithoutAppPool_Fails(string appPool)
+        {
+            AssertFails(
+                NewModule("MyModule"),
+                "the custom section of the global module 'MyModule' has no appPool.",
+                new CustomConfig { AppPool = appPool, Options = Options });
+        }
+
+        [TestCase("")]
+        [TestCase(null)]
+        [TestCase("   ")]
+        public void Build_SectionWithoutOptions_Fails(string options)
+        {
+            AssertFails(
+                NewModule("MyModule"),
+                "the custom section of the global module 'MyModule' has no options.",
+                new CustomConfig { AppPool = AppPool, Options = options });
+        }
+
+        [Test]
         public void Constructor_ExposesConfigPath()
         {
             using (var manager = new ServerManager(_configPath))
             {
-                var builder = new GlobalModuleBuilder(NewModule("MyModule"), manager, _configPath);
+                var builder = new GlobalModuleBuilder(NewModule("MyModule"), manager, null, _configPath);
 
                 Assert.That(builder.ConfigPath, Is.EqualTo(_configPath));
             }
@@ -223,11 +373,11 @@ namespace IISAppCmd.Tests
             {
                 Assert.Multiple(() =>
                 {
-                    Assert.That(() => new GlobalModuleBuilder(null, manager, _configPath), Throws.ArgumentNullException);
-                    Assert.That(() => new GlobalModuleBuilder(new GlobalModule(), null, _configPath), Throws.ArgumentNullException);
-                    Assert.That(() => new GlobalModuleBuilder(new GlobalModule(), manager, ""), Throws.ArgumentException);
+                    Assert.That(() => new GlobalModuleBuilder(null, manager, null, _configPath), Throws.ArgumentNullException);
+                    Assert.That(() => new GlobalModuleBuilder(new GlobalModule(), null, null, _configPath), Throws.ArgumentNullException);
+                    Assert.That(() => new GlobalModuleBuilder(new GlobalModule(), manager, null, ""), Throws.ArgumentException);
                     Assert.That(
-                        () => new GlobalModuleBuilder(new GlobalModule(), manager, Path.Combine(_scratch, "missing.config")),
+                        () => new GlobalModuleBuilder(new GlobalModule(), manager, null, Path.Combine(_scratch, "missing.config")),
                         Throws.TypeOf<FileNotFoundException>());
                 });
             }
@@ -241,24 +391,70 @@ namespace IISAppCmd.Tests
             PreCondition = "bitness64",
         };
 
-        private void BuildAndCommit(GlobalModule module)
+        /// <summary>
+        /// Runs the builder the way Program does: the module through the
+        /// ServerManager, the commit, then the custom section.
+        /// </summary>
+        private void BuildAndCommit(GlobalModule module, CustomConfig customConfig = null)
         {
+            GlobalModuleBuilder builder;
+
             using (var manager = new ServerManager(_configPath))
             {
-                var builder = new GlobalModuleBuilder(module, manager, _configPath);
+                builder = new GlobalModuleBuilder(module, manager, customConfig, _configPath);
                 Assert.That(builder.Build(out string error), Is.True, error);
                 manager.CommitChanges();
             }
+
+            Assert.That(builder.BuildCustomConfig(out string customError), Is.True, customError);
         }
 
+        /// <summary>
+        /// Takes the builder as far as the commit and hands it back, so a test
+        /// can look at the file before the custom section reaches it, or write
+        /// another section into a module that is already there.
+        /// </summary>
+        private GlobalModuleBuilder BuildAndCommitModuleOnly(GlobalModule module, CustomConfig customConfig, bool buildModule = true)
+        {
+            GlobalModuleBuilder builder;
+
+            using (var manager = new ServerManager(_configPath))
+            {
+                builder = new GlobalModuleBuilder(module, manager, customConfig, _configPath);
+
+                if (buildModule)
+                {
+                    Assert.That(builder.Build(out string error), Is.True, error);
+                    manager.CommitChanges();
+                }
+            }
+
+            return builder;
+        }
+
+        /// <summary>The custom section of the smallest run that asks for one.</summary>
+        private static CustomConfig NewCustomConfig() => new CustomConfig
+        {
+            AppPool = AppPool,
+            Options = Options,
+        };
+
+        /// <summary>The entry of the module once it carries the custom section.</summary>
+        private static string ExpectedSection() =>
+            @"<add name=""MyModule"" preCondition=""bitness64"">" + "\r\n"
+            + EntryIndent + "    <dynatrace>\r\n"
+            + EntryIndent + @"        <config appPool=""" + AppPool + @""" options=""" + Options + @""" />" + "\r\n"
+            + EntryIndent + "    </dynatrace>\r\n"
+            + EntryIndent + "</add>";
+
         /// <summary>Builds and expects a refusal that names the culprit; returns the message.</summary>
-        private string AssertFails(GlobalModule module, string expected)
+        private string AssertFails(GlobalModule module, string expected, CustomConfig customConfig = null)
         {
             int declared = GlobalModules().Elements("add").Count();
 
             using (var manager = new ServerManager(_configPath))
             {
-                var builder = new GlobalModuleBuilder(module, manager, _configPath);
+                var builder = new GlobalModuleBuilder(module, manager, customConfig, _configPath);
 
                 bool ok = builder.Build(out string error);
                 manager.CommitChanges();
