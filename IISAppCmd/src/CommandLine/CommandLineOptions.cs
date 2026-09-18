@@ -1,4 +1,4 @@
-namespace IISAppCmd.CommandLine
+﻿namespace IISAppCmd.CommandLine
 {
     /// <summary>Process bitness requested on the command line.</summary>
     public enum Bitness
@@ -38,6 +38,27 @@ namespace IISAppCmd.CommandLine
 
         /// <summary>Port the site binds to.</summary>
         public int Port { get; set; } = DefaultPort;
+
+        /// <summary>
+        /// Name of the native module to register, taken from --globalmodule.
+        /// Null when the option was not given, in which case the run registers
+        /// no module.
+        /// </summary>
+        public string GlobalModule { get; set; }
+
+        /// <summary>
+        /// Path of the DLL the global module lives in, taken from
+        /// --globalmodule. Left as written, so it may still carry environment
+        /// variables such as %windir%.
+        /// </summary>
+        public string GlobalModuleImage { get; set; }
+
+        /// <summary>
+        /// Condition under which the global module is loaded, taken from
+        /// --globalmodule. Null when the value carried none, in which case the
+        /// bitness of the run decides it.
+        /// </summary>
+        public string GlobalModulePreCondition { get; set; }
 
         /// <summary>
         /// Where the working copy of applicationHost.config is written. Null

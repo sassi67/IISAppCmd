@@ -14,20 +14,23 @@ namespace IISAppCmd.CommandLine
     public static class CommandLineParser
     {
         public const string HelpText =
-@"IISAppCmd - writes an application pool and a site into a copy of applicationHost.config.
+@"IISAppCmd - writes an application pool, a site and an optional global module
+into a copy of applicationHost.config.
 
 Usage:
-  IISAppCmd -ap <json> [-b <32|64>] [-t <tfm>] [-p <port>] [-c <path>]
+  IISAppCmd -ap <json> [-gm <json>] [-b <32|64>] [-t <tfm>] [-p <port>] [-c <path>]
 
 Options:
-  -ap,  --application <json>   Application the site serves, as
-                               {""name"": ""..."", ""path"": ""...""}. Required.
-  -b,   --bitness     <32|64>  Bitness of the worker process. Default 64.
-  -t,   --tfm         <tfm>    Framework the application targets. Default netcoreapp3.1.
-  -p,   --port        <number> Port the site listens on, 1-65535. Default 5001.
-  -c,   --config      <path>   Where the working copy of applicationHost.config is
-                               written. Default %TEMP%\iisconfig\applicationhost-<id>.config.
-  -h,   --help                 Show this help text.
+  -ap,  --application  <json>   Application the site serves, as
+                                {""name"": ""..."", ""path"": ""...""}. Required.
+  -gm,  --globalmodule <json>   Native module to register, as {""name"": ""..."",
+                                ""image"": ""..."", ""preCondition"": ""...""}.
+  -b,   --bitness      <32|64>  Bitness of the worker process. Default 64.
+  -t,   --tfm          <tfm>    Framework the application targets. Default netcoreapp3.1.
+  -p,   --port         <number> Port the site listens on, 1-65535. Default 5001.
+  -c,   --config       <path>   Where the working copy of applicationHost.config is
+                                written. Default %TEMP%\iisconfig\applicationhost-<id>.config.
+  -h,   --help                  Show this help text.
 
 Only --application is required. Options may be given in short or long form,
 with a space or an '=' between the option and its value.
@@ -38,8 +41,16 @@ path of the site's root virtual directory. The value is JSON, so it needs
 quoting for your shell: escape the inner quotes in cmd, or wrap the whole
 value in single quotes in PowerShell and bash.
 
+--globalmodule carries the same {""name"", ""image"", ""preCondition""} triple
+iisexpressstarter takes: the module is written to <globalModules> and enabled
+in <modules>, so it loads for every application of the site. Only the name and
+the image are required; without a preCondition the bitness of the run supplies
+one. The image is kept as written, so it may name its DLL through an
+environment variable such as %windir%.
+
 --bitness decides whether the pool runs 32-bit (enable32BitAppOnWin64) or
-64-bit.
+64-bit, and which preCondition a global module without one is given,
+bitness32 or bitness64.
 
 --tfm sets the CLR the application pool loads: none for netcoreapp*,
 netstandard* and net5.0 or later, v4.0 for net4x, v2.0 for anything older.
@@ -54,7 +65,8 @@ Examples:
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -t net10.0
   IISAppCmd --application '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' --port 8080
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -b 32 -t net48
-  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -c C:\temp\a.config";
+  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -c C:\temp\a.config
+  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -gm '{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}'";
 
         private static readonly Regex TfmPattern = new Regex(
             @"^(net\d+\.\d+(-[a-z][a-z0-9.]*)?|net\d{2,3}|netcoreapp\d+\.\d+|netstandard\d+\.\d+)$",
@@ -68,6 +80,7 @@ Examples:
             string tfm = null;
             string port = null;
             string application = null;
+            string globalModule = null;
             string config = null;
 
             for (int i = 0; i < args.Length; i++)
@@ -102,6 +115,10 @@ Examples:
                     case "ap":
                     case "application":
                         canonical = "application";
+                        break;
+                    case "gm":
+                    case "globalmodule":
+                        canonical = "globalmodule";
                         break;
                     case "c":
                     case "config":
@@ -141,6 +158,9 @@ Examples:
                     case "application":
                         duplicate = Assign(ref application, value);
                         break;
+                    case "globalmodule":
+                        duplicate = Assign(ref globalModule, value);
+                        break;
                     default:
                         duplicate = Assign(ref config, value);
                         break;
@@ -175,6 +195,16 @@ Examples:
             if (!TryMakeAbsolute(applicationPath, out string physicalPath, out string pathError))
             {
                 return ParseResult.Fail($"invalid application path '{applicationPath}': {pathError}");
+            }
+
+            string moduleName = null;
+            string moduleImage = null;
+            string modulePreCondition = null;
+
+            if (globalModule != null &&
+                !ReadInlineGlobalModule(globalModule, out moduleName, out moduleImage, out modulePreCondition, out string moduleError))
+            {
+                return ParseResult.Fail(moduleError);
             }
 
             if (bitness != null && bitness != "32" && bitness != "64")
@@ -222,6 +252,9 @@ Examples:
                 Application = applicationName,
                 ApplicationPath = physicalPath,
                 Port = listeningPort,
+                GlobalModule = moduleName,
+                GlobalModuleImage = moduleImage,
+                GlobalModulePreCondition = modulePreCondition,
                 ConfigPath = config,
             });
         }
@@ -263,6 +296,70 @@ Examples:
             if (!TryReadText(members, "path", out path))
             {
                 error = "--application is missing a non-empty 'path'.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        /// <summary>
+        /// Reads the inline --globalmodule value, which has the same shape as one
+        /// entry of the "globalModules" array of iisexpressstarter's configuration
+        /// file: a required name and image, and an optional preCondition.
+        /// </summary>
+        private static bool ReadInlineGlobalModule(string value, out string name, out string image, out string preCondition, out string error)
+        {
+            name = null;
+            image = null;
+            preCondition = null;
+
+            object parsed;
+
+            try
+            {
+                parsed = new JavaScriptSerializer().DeserializeObject(value);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
+            {
+                error = $"--globalmodule is not valid JSON: {ex.Message}";
+                return false;
+            }
+
+            if (!(parsed is Dictionary<string, object> members))
+            {
+                error = "--globalmodule expects a JSON object with a 'name' and an 'image'.";
+                return false;
+            }
+
+            if (!TryReadText(members, "name", out name))
+            {
+                error = "--globalmodule is missing a non-empty 'name'.";
+                return false;
+            }
+
+            if (!TryReadText(members, "image", out image))
+            {
+                error = "--globalmodule is missing a non-empty 'image'.";
+                return false;
+            }
+
+            // The image is left as written, because IIS expands the environment
+            // variables such a path usually carries; only what no path may hold
+            // is refused here.
+            int invalidCharIndex = image.IndexOfAny(Path.GetInvalidPathChars());
+            if (invalidCharIndex >= 0)
+            {
+                error = $"invalid global module image '{image}': it contains the unsupported character "
+                    + $"'{image[invalidCharIndex]}'.";
+                return false;
+            }
+
+            // The preCondition is optional: without one the bitness of the run
+            // decides it, so only a present-but-empty value is a mistake.
+            if (members.ContainsKey("preCondition") && !TryReadText(members, "preCondition", out preCondition))
+            {
+                error = "--globalmodule has an empty 'preCondition'.";
                 return false;
             }
 

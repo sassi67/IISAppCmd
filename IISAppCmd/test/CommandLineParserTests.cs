@@ -13,6 +13,8 @@ namespace IISAppCmd.Tests
 
         private const string ApplicationPath = @"C:\apps\scratch";
 
+        private const string GlobalModuleJson = @"{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}";
+
         [Test]
         public void Parse_OnlyApplication_UsesDefaults()
         {
@@ -27,6 +29,9 @@ namespace IISAppCmd.Tests
                 Assert.That(result.Options.Port, Is.EqualTo(5001));
                 Assert.That(result.Options.Application, Is.EqualTo("Scratch"));
                 Assert.That(result.Options.ApplicationPath, Is.EqualTo(ApplicationPath));
+                Assert.That(result.Options.GlobalModule, Is.Null);
+                Assert.That(result.Options.GlobalModuleImage, Is.Null);
+                Assert.That(result.Options.GlobalModulePreCondition, Is.Null);
                 Assert.That(result.Options.ConfigPath, Is.Null);
             });
         }
@@ -159,6 +164,124 @@ namespace IISAppCmd.Tests
             Assert.That(result.Error, Does.StartWith("invalid application path 'C:/ap|ps'"));
         }
 
+        [TestCase("-gm")]
+        [TestCase("--globalmodule")]
+        [TestCase("--GLOBALMODULE")]
+        public void Parse_GlobalModule_ReadsNameAndImage(string option)
+        {
+            var result = CommandLineParser.Parse(With(option, GlobalModuleJson));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Options.GlobalModule, Is.EqualTo("MyModule"));
+                Assert.That(result.Options.GlobalModuleImage, Is.EqualTo("C:/modules/my.dll"));
+                Assert.That(result.Options.GlobalModulePreCondition, Is.Null, "without one the bitness of the run decides it");
+            });
+        }
+
+        [Test]
+        public void Parse_GlobalModule_EqualsSeparated()
+        {
+            var result = CommandLineParser.Parse(With("-gm=" + GlobalModuleJson));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.GlobalModule, Is.EqualTo("MyModule"));
+        }
+
+        [Test]
+        public void Parse_GlobalModule_ReadsThePreCondition()
+        {
+            var result = CommandLineParser.Parse(With(
+                "-gm", @"{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll"", ""preCondition"": ""bitness64,integratedMode""}"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.GlobalModulePreCondition, Is.EqualTo("bitness64,integratedMode"));
+        }
+
+        [Test]
+        public void Parse_GlobalModule_MembersMayComeInAnyOrder()
+        {
+            var result = CommandLineParser.Parse(With("-gm", @"{""image"": ""C:/modules/my.dll"", ""name"": ""MyModule""}"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Options.GlobalModule, Is.EqualTo("MyModule"));
+                Assert.That(result.Options.GlobalModuleImage, Is.EqualTo("C:/modules/my.dll"));
+            });
+        }
+
+        [Test]
+        public void Parse_GlobalModule_ImageKeepsItsEnvironmentVariables()
+        {
+            var result = CommandLineParser.Parse(With(
+                "-gm", @"{""name"": ""MyModule"", ""image"": ""%windir%\\System32\\inetsrv\\my.dll""}"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.GlobalModuleImage, Is.EqualTo(@"%windir%\System32\inetsrv\my.dll"));
+        }
+
+        [TestCase("not json")]
+        [TestCase(@"{""name"": ""MyModule"",}")]
+        public void Parse_GlobalModule_InvalidJson_Fails(string value)
+        {
+            var result = CommandLineParser.Parse(With("-gm", value));
+
+            Assert.That(result.Error, Does.StartWith("--globalmodule is not valid JSON"));
+        }
+
+        [TestCase("[1, 2]")]
+        [TestCase("42")]
+        [TestCase(@"""MyModule""")]
+        public void Parse_GlobalModule_NotAnObject_Fails(string value)
+        {
+            var result = CommandLineParser.Parse(With("-gm", value));
+
+            Assert.That(result.Error, Is.EqualTo("--globalmodule expects a JSON object with a 'name' and an 'image'."));
+        }
+
+        [TestCase(@"{""image"": ""C:/modules/my.dll""}", "name")]
+        [TestCase(@"{""name"": ""  "", ""image"": ""C:/modules/my.dll""}", "name")]
+        [TestCase(@"{""name"": 7, ""image"": ""C:/modules/my.dll""}", "name")]
+        [TestCase(@"{""name"": ""MyModule""}", "image")]
+        [TestCase(@"{""name"": ""MyModule"", ""image"": """"}", "image")]
+        public void Parse_GlobalModule_MissingMember_Fails(string value, string member)
+        {
+            var result = CommandLineParser.Parse(With("-gm", value));
+
+            Assert.That(result.Error, Is.EqualTo($"--globalmodule is missing a non-empty '{member}'."));
+        }
+
+        [Test]
+        public void Parse_GlobalModule_EmptyPreCondition_Fails()
+        {
+            var result = CommandLineParser.Parse(With(
+                "-gm", @"{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll"", ""preCondition"": ""  ""}"));
+
+            Assert.That(result.Error, Is.EqualTo("--globalmodule has an empty 'preCondition'."));
+        }
+
+        [Test]
+        public void Parse_GlobalModule_ImageWithInvalidCharacters_Fails()
+        {
+            var result = CommandLineParser.Parse(With("-gm", @"{""name"": ""MyModule"", ""image"": ""C:/mod|ules/my.dll""}"));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Error, Does.StartWith("invalid global module image 'C:/mod|ules/my.dll'"));
+                Assert.That(result.Error, Does.Contain("'|'"));
+            });
+        }
+
+        [Test]
+        public void Parse_DuplicateGlobalModule_Fails()
+        {
+            var result = CommandLineParser.Parse(With("-gm", GlobalModuleJson, "--globalmodule", GlobalModuleJson));
+
+            Assert.That(result.Error, Is.EqualTo("option '--globalmodule' was specified more than once."));
+        }
+
         [TestCase("-b", "32", Bitness.X86)]
         [TestCase("-b", "64", Bitness.X64)]
         [TestCase("--bitness", "32", Bitness.X86)]
@@ -288,7 +411,8 @@ namespace IISAppCmd.Tests
         {
             var result = CommandLineParser.Parse(new[]
             {
-                "--bitness=32", "-t", "net48", "-ap", ApplicationJson, "--port", "8080", "--config", @"C:\temp\a.config",
+                "--bitness=32", "-t", "net48", "-ap", ApplicationJson, "--port", "8080",
+                "-gm=" + GlobalModuleJson, "--config", @"C:\temp\a.config",
             });
 
             Assert.That(result.Error, Is.Null);
@@ -299,6 +423,8 @@ namespace IISAppCmd.Tests
                 Assert.That(result.Options.Application, Is.EqualTo("Scratch"));
                 Assert.That(result.Options.ApplicationPath, Is.EqualTo(ApplicationPath));
                 Assert.That(result.Options.Port, Is.EqualTo(8080));
+                Assert.That(result.Options.GlobalModule, Is.EqualTo("MyModule"));
+                Assert.That(result.Options.GlobalModuleImage, Is.EqualTo("C:/modules/my.dll"));
                 Assert.That(result.Options.ConfigPath, Is.EqualTo(@"C:\temp\a.config"));
             });
         }
@@ -374,6 +500,7 @@ namespace IISAppCmd.Tests
             Assert.Multiple(() =>
             {
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--application"));
+                Assert.That(CommandLineParser.HelpText, Does.Contain("--globalmodule"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--bitness"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--tfm"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--port"));
