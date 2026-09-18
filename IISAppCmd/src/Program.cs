@@ -38,6 +38,7 @@ namespace IISAppCmd
             Console.WriteLine($"application : {options.Application}");
             Console.WriteLine($"path        : {options.ApplicationPath}");
             Console.WriteLine($"port        : {options.Port}");
+            Console.WriteLine($"module      : {options.GlobalModule ?? "(none)"}");
 
             string configPath = options.ConfigPath ?? ApplicationHostConfig.DefaultWorkingCopyPath(id);
 
@@ -51,6 +52,9 @@ namespace IISAppCmd
 
             IIS.ApplicationPool pool = ApplicationPoolFactory.FromCommandLine(options, id);
             IIS.Site site = SiteFactory.FromCommandLine(options, id);
+
+            // Null unless --globalmodule asked for one.
+            GlobalModule module = GlobalModuleFactory.FromCommandLine(options);
 
             if (!Directory.Exists(options.ApplicationPath))
             {
@@ -77,6 +81,17 @@ namespace IISAppCmd
                         return (int)ExitCode.ConfigurationError;
                     }
 
+                    if (module != null)
+                    {
+                        var moduleBuilder = new GlobalModuleBuilder(module, manager, configPath);
+
+                        if (!moduleBuilder.Build(out string moduleError))
+                        {
+                            Console.Error.WriteLine($"error: {moduleError}");
+                            return (int)ExitCode.ConfigurationError;
+                        }
+                    }
+
                     // Single commit point for every edit made to the copied configuration.
                     manager.CommitChanges();
                 }
@@ -89,6 +104,12 @@ namespace IISAppCmd
 
             Console.WriteLine($"Added application pool: {pool.Name}");
             Console.WriteLine($"Added site: {site.Name} -> http://localhost:{options.Port}/");
+
+            if (module != null)
+            {
+                Console.WriteLine($"Added global module: {module.Name} ({module.Image})");
+            }
+
             return (int)ExitCode.Success;
         }
     }
