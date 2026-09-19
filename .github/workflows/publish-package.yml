@@ -65,7 +65,10 @@ jobs:
           $zip = "artifacts/IISAppCmd-$version.zip"
           Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          "$hash  IISAppCmd-$version.zip" | Out-File -Encoding ascii "$zip.sha256"
+          # WriteAllText rather than Out-File: the latter ends the line with a
+          # CRLF, which makes `sha256sum -c` look for a file whose name ends in
+          # a carriage return.
+          [IO.File]::WriteAllText((Join-Path $PWD "$zip.sha256"), "$hash  IISAppCmd-$version.zip`n")
           Write-Host "SHA-256: $hash"
           Get-ChildItem artifacts
 
@@ -83,5 +86,13 @@ jobs:
             artifacts/IISAppCmd-${{ steps.version.outputs.version }}.zip
             artifacts/IISAppCmd-${{ steps.version.outputs.version }}.zip.sha256
 
+      # dotnet nuget push does not expand a wildcard whose path uses forward
+      # slashes on Windows: it reports "File does not exist (artifacts/*.nupkg)"
+      # even when the package is sitting there. Resolve it explicitly instead,
+      # which also fails loudly if pack produced nothing.
       - name: Push to GitHub Packages
-        run: dotnet nuget push artifacts/*.nupkg --source https://nuget.pkg.github.com/sassi67/index.json --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+        run: |
+          $pkg = Get-ChildItem artifacts/*.nupkg | Select-Object -First 1
+          if (-not $pkg) { throw 'No .nupkg found in artifacts.' }
+          Write-Host "Pushing $($pkg.Name)"
+          dotnet nuget push $pkg.FullName --source https://nuget.pkg.github.com/sassi67/index.json --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
