@@ -4,14 +4,19 @@ using System.IO;
 namespace IISAppCmd.Config
 {
     /// <summary>
-    /// Copies the bundled Resources\applicationHost.config to a working location
-    /// so it can be tailored without touching the bundled file itself.
+    /// Copies an applicationHost.config to a working location so it can be
+    /// tailored without touching the original.
     /// </summary>
     public static class ApplicationHostConfig
     {
         public const string ScratchDirectoryName = "iisconfig";
 
-        /// <summary>The applicationHost.config shipped next to the executable.</summary>
+        /// <summary>
+        /// The applicationHost.config a local build has next to the executable,
+        /// used when --source names no other one. It is a fixture for tests and
+        /// local runs: a deployed copy of the tool ships without it, and is
+        /// pointed at the configuration of an installed IIS Express instead.
+        /// </summary>
         public static string BundledPath =>
             Path.Combine(AppContext.BaseDirectory, "Resources", "applicationHost.config");
 

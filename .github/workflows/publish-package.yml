@@ -1,0 +1,87 @@
+name: Publish Package
+
+# The package is a distribution container: consumers download it and unzip it,
+# so every release ships both the .nupkg on the feed and a flat .zip asset.
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version, without a leading v (e.g. 1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  publish:
+    # net481 and Microsoft.Web.Administration build and test nowhere else.
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Resolve version
+        id: version
+        run: |
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $version = '${{ inputs.version }}'
+          } else {
+            $version = '${{ github.ref_name }}' -replace '^v', ''
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+') {
+            throw "Version '$version' does not start with major.minor.patch."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $version"
+
+      - name: Build
+        run: msbuild IISAppCmd/IISAppCmd.csproj /p:Configuration=Release /p:Version=${{ steps.version.outputs.version }} /restore
+
+      - name: Run tests
+        run: dotnet test IISAppCmd/test/IISAppCmd.Tests.csproj --configuration Release -p:Version=${{ steps.version.outputs.version }}
+
+      # --no-build so the package carries exactly the binaries the tests ran against.
+      - name: Pack
+        run: dotnet pack IISAppCmd/IISAppCmd.csproj --configuration Release --no-build -p:Version=${{ steps.version.outputs.version }} --output artifacts
+
+      # The same files the package holds under tools\net481, flat. -File without
+      # -Recurse is what leaves the test-only Resources\ folder behind.
+      - name: Build the release zip
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $stage = "staging/IISAppCmd-$version"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Get-ChildItem IISAppCmd/bin/Release -File |
+            Where-Object { $_.Extension -ne '.pdb' } |
+            Copy-Item -Destination $stage
+          $zip = "artifacts/IISAppCmd-$version.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  IISAppCmd-$version.zip" | Out-File -Encoding ascii "$zip.sha256"
+          Write-Host "SHA-256: $hash"
+          Get-ChildItem artifacts
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: IISAppCmd-${{ steps.version.outputs.version }}
+          path: artifacts/
+
+      - name: Publish the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          files: |
+            artifacts/IISAppCmd-${{ steps.version.outputs.version }}.zip
+            artifacts/IISAppCmd-${{ steps.version.outputs.version }}.zip.sha256
+
+      - name: Push to GitHub Packages
+        run: dotnet nuget push artifacts/*.nupkg --source https://nuget.pkg.github.com/sassi67/index.json --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate

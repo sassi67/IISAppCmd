@@ -33,6 +33,9 @@ namespace IISAppCmd
             // Identifies this run; every artefact it produces is tagged with it.
             string id = Guid.NewGuid().ToString("N").Substring(0, 8);
 
+            string configPath = options.ConfigPath ?? ApplicationHostConfig.DefaultWorkingCopyPath(id);
+            string sourcePath = options.SourceConfigPath ?? ApplicationHostConfig.BundledPath;
+
             Console.WriteLine($"bitness     : {(int)options.Bitness}");
             Console.WriteLine($"tfm         : {options.Tfm}");
             Console.WriteLine($"application : {options.Application}");
@@ -40,10 +43,9 @@ namespace IISAppCmd
             Console.WriteLine($"port        : {options.Port}");
             Console.WriteLine($"module      : {options.GlobalModule ?? "(none)"}");
             Console.WriteLine($"options     : {options.CustomConfigOptions ?? "(none)"}");
+            Console.WriteLine($"source      : {sourcePath}");
 
-            string configPath = options.ConfigPath ?? ApplicationHostConfig.DefaultWorkingCopyPath(id);
-
-            if (!ApplicationHostConfig.CreateWorkingCopy(ApplicationHostConfig.BundledPath, configPath, out string configError))
+            if (!ApplicationHostConfig.CreateWorkingCopy(sourcePath, configPath, out string configError))
             {
                 Console.Error.WriteLine($"error: {configError}");
                 return (int)ExitCode.ConfigurationError;

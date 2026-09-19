@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-IISAppCmd is a .NET Framework console application that modifies an IIS configuration file. It copies the bundled `Resources/applicationHost.config` to a working location and writes an application pool, the site that runs in it and, when asked for one, a native global module with the custom section of the IIS agent into the copy through `Microsoft.Web.Administration`, using the same command-line syntax as the `iisexpressstarter` reference tool.
+IISAppCmd is a .NET Framework console application that modifies an IIS configuration file. It copies an `applicationHost.config` to a working location and writes an application pool, the site that runs in it and, when asked for one, a native global module with the custom section of the IIS agent into the copy through `Microsoft.Web.Administration`, using the same command-line syntax as the `iisexpressstarter` reference tool.
 
 ## Build
 
@@ -35,17 +35,27 @@ The builder tests write through `Microsoft.Web.Administration` into a private co
 ## Run
 
 ```bash
-IISAppCmd\bin\Debug\IISAppCmd.exe -ap <json> [-gm <json>] [-cc <json>] [-b <32|64>] [-t <tfm>] [-p <port>] [-c <path>]
+IISAppCmd\bin\Debug\IISAppCmd.exe -ap <json> [-gm <json>] [-cc <json>] [-b <32|64>] [-t <tfm>] [-p <port>] [-s <path>] [-c <path>]
 ```
 
-`-ap` is the only required option; it carries the application inline as `{"name": "...", "path": "..."}`, the same shape `iisexpressstarter` takes, and its path is served from the root of the site. `-gm` carries a native module the same way, as `{"name": "...", "image": "...", "preCondition": "..."}`, and only then is one written. `-cc` carries the custom section that module gets, as `{"appPool": "...", "options": "..."}`, and needs `-gm`. `-h` prints the full help. Without `-c` the copy is written to `%TEMP%\iisconfig\applicationhost-<id>.config`.
+`-ap` is the only required option; it carries the application inline as `{"name": "...", "path": "..."}`, the same shape `iisexpressstarter` takes, and its path is served from the root of the site. `-gm` carries a native module the same way, as `{"name": "...", "image": "...", "preCondition": "..."}`, and only then is one written. `-cc` carries the custom section that module gets, as `{"appPool": "...", "options": "..."}`, and needs `-gm`. `-s` names the `applicationHost.config` the run copies; without it the bundled `Resources\applicationHost.config` next to the executable is used, which only a local build has. `-h` prints the full help. Without `-c` the copy is written to `%TEMP%\iisconfig\applicationhost-<id>.config`.
+
+## Pack
+
+```bash
+dotnet pack IISAppCmd/IISAppCmd.csproj -c Release -o artifacts -p:Version=1.0.0
+```
+
+The package is a distribution container, not something a project references: the consumer (a Java application) downloads it and unzips it. `IncludeBuildOutput=false` plus the `AddToolFilesToPackage` target put the build output under `tools\net481\` instead of `lib\`, minus `Resources\**`, which is a test fixture a deployed copy does not carry. The glob has to stay inside that target, because a top-level `ItemGroup` is evaluated before `Build` runs.
+
+Releases are cut by pushing a `v*` tag: `.github/workflows/publish-package.yml` builds, tests, packs, attaches a flat `IISAppCmd-<version>.zip` and its SHA-256 to the GitHub release, and pushes the `.nupkg` to GitHub Packages. The version comes from the tag, so `AssemblyVersion` and the package version cannot drift.
 
 ## Architecture
 
 - Main project `IISAppCmd/IISAppCmd.csproj` (SDK-style, `Exe`, `net481`, root namespace `IISAppCmd`) and test project `IISAppCmd/test/IISAppCmd.Tests.csproj` (NUnit 4).
 - Solution uses the new slnx format (`IISAppCmd.slnx`) rather than a legacy `.sln`.
-- `src/CommandLine/`: option model and parser (`-ap`, `-gm`, `-cc`, `-b`, `-t`, `-p`, `-c`, `-h`), mirroring `iisexpressstarter`'s syntax.
-- `src/Config/ApplicationHostConfig.cs`: locates the bundled config and creates the working copy; never overwrites an existing file.
+- `src/CommandLine/`: option model and parser (`-ap`, `-gm`, `-cc`, `-b`, `-t`, `-p`, `-s`, `-c`, `-h`), mirroring `iisexpressstarter`'s syntax. Path options are only checked for shape here, never for existence, so that a malformed path is a usage error and a missing file a configuration error.
+- `src/Config/ApplicationHostConfig.cs`: creates the working copy of the configuration `-s` names, falling back to the bundled one; never overwrites an existing file.
 - `src/IIS/`: data structures mirroring IIS schema elements (`ApplicationPool`, `Site`, `GlobalModule`, `CustomConfig`, …), the factories that fill them from the command line (`ApplicationPoolFactory`, `SiteFactory`, `GlobalModuleFactory`, `CustomConfigFactory`) and the builders that write them through a `ServerManager` opened on the copy (`ApplicationPoolBuilder`, `SiteBuilder`, `GlobalModuleBuilder`; the caller commits). `SiteBuilder` is also given the pool the run created, and every application of the site that names no pool runs in it. `GlobalModuleBuilder` declares the module in `<globalModules>` and enables it in `<modules>`, which is what makes IIS load it. `ConfigurationWriter` holds the attribute conversions the builders need.
 - The custom section of `Resources/IISAgentConfigSchema.xml` (`<dynatrace><config appPool options /></dynatrace>` inside the module's entry in `<modules>`) goes one of two ways, because the IIS configuration system refuses both to write and to read an element it has no schema for. `GlobalModuleBuilder.Build()` writes it through `Microsoft.Web.Administration` when the machine knows the schema, and says so through `CustomConfigWritten`; otherwise `GlobalModuleBuilder.BuildCustomConfig()` edits the XML directly, which has to happen *after* `CommitChanges()`, and nothing may open the file through a `ServerManager` afterwards. `MWA` only ever reads `%windir%\system32\inetsrv\config\schema`, whatever the IIS Express installation holds, so that is the directory the schema has to be in for the first way.
 - `src/Program.cs`: parse, copy, build the pool, build the site, build the global module when one was asked for, single `CommitChanges()`, then `BuildCustomConfig()`, which is a no-op when the section already went in with the rest. Exit codes follow the reference tool: 0 success, 1 usage error, 3 configuration error.

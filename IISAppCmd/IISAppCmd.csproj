@@ -8,12 +8,35 @@
     <Nullable>disable</Nullable>
     <Deterministic>true</Deterministic>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
-    <!-- Properties\AssemblyInfo.cs carries the assembly attributes. -->
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ComVisible>false</ComVisible>
     <!-- Keep the documented bin\Debug\IISAppCmd.exe location. -->
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <!-- The test project lives under test\ and must not be compiled into the exe. -->
     <DefaultItemExcludes>$(DefaultItemExcludes);test\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <!--
+    The package is a distribution container: the consumer downloads it, unzips
+    it and runs tools\net481\IISAppCmd.exe. Nothing restores it through NuGet,
+    so the build output goes to tools\ rather than lib\, and the dependency is
+    shipped beside the executable instead of being declared.
+  -->
+  <PropertyGroup>
+    <PackageId>IISAppCmd</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Alessandro Sacilotto</Authors>
+    <Description>Console tool that writes an application pool, a site and an optional native global module into a copy of applicationHost.config.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/sassi67/IISAppCmd</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/sassi67/IISAppCmd.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>iis;iisexpress;applicationhost;apppool</PackageTags>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);AddToolFilesToPackage</TargetsForTfmSpecificContentInPackage>
+    <!-- Expected of a package that carries no lib\ assembly. -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,6 +49,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      Fixtures for the tests and for local runs that name no source
+      configuration. A deployed copy ships without them, so they are excluded
+      from the package.
+    -->
     <None Include="Resources\applicationHost.config">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
@@ -33,5 +61,24 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\LICENSE" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!--
+    The glob has to live inside a target: a top-level ItemGroup is evaluated
+    before Build runs, so on a clean machine it would match nothing.
+    %(RecursiveDir) keeps any subfolder of the output a subfolder of tools\.
+  -->
+  <Target Name="AddToolFilesToPackage">
+    <ItemGroup>
+      <_ToolFile Include="$(OutputPath)**\*.*"
+                 Exclude="$(OutputPath)**\*.pdb;$(OutputPath)Resources\**" />
+      <TfmSpecificPackageFile Include="@(_ToolFile)"
+                              PackagePath="tools\$(TargetFramework)\%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
+  </Target>
 
 </Project>

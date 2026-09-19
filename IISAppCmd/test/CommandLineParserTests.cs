@@ -36,6 +36,7 @@ namespace IISAppCmd.Tests
                 Assert.That(result.Options.GlobalModulePreCondition, Is.Null);
                 Assert.That(result.Options.CustomConfigOptions, Is.Null);
                 Assert.That(result.Options.CustomConfigAppPool, Is.Null);
+                Assert.That(result.Options.SourceConfigPath, Is.Null);
                 Assert.That(result.Options.ConfigPath, Is.Null);
             });
         }
@@ -474,6 +475,67 @@ namespace IISAppCmd.Tests
             Assert.That(result.Error, Is.EqualTo($"invalid port '{value}': expected a number between 1 and 65535."));
         }
 
+        [TestCase("-s")]
+        [TestCase("--source")]
+        public void Parse_SourcePath_ReadsThePath(string option)
+        {
+            var result = CommandLineParser.Parse(With(option, @"C:\iisexpress\AppServer\applicationHost.config"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.SourceConfigPath, Is.EqualTo(@"C:\iisexpress\AppServer\applicationHost.config"));
+        }
+
+        [Test]
+        public void Parse_SourcePath_IsMadeAbsolute()
+        {
+            var result = CommandLineParser.Parse(With("-s", "template.config"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.SourceConfigPath, Is.EqualTo(Path.GetFullPath("template.config")));
+            Assert.That(Path.IsPathRooted(result.Options.SourceConfigPath), Is.True);
+        }
+
+        [Test]
+        public void Parse_SourcePath_ForwardSlashesAreNormalised()
+        {
+            var result = CommandLineParser.Parse(With("--source=C:/iisexpress/AppServer/applicationHost.config"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.SourceConfigPath, Is.EqualTo(@"C:\iisexpress\AppServer\applicationHost.config"));
+        }
+
+        [Test]
+        public void Parse_SourcePath_WithInvalidCharacters_Fails()
+        {
+            var result = CommandLineParser.Parse(With("-s", "temp|late.config"));
+
+            Assert.That(result.Error, Does.StartWith("invalid source path"));
+        }
+
+        [Test]
+        public void Parse_SourcePath_ThatDoesNotExist_IsAccepted()
+        {
+            // Whether the file is there is the copy's business, so that a
+            // missing source is a configuration error, not a usage error.
+            var result = CommandLineParser.Parse(With("-s", @"C:\nowhere\applicationHost.config"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.SourceConfigPath, Is.EqualTo(@"C:\nowhere\applicationHost.config"));
+        }
+
+        [Test]
+        public void Parse_SourcePath_IsKeptApartFromConfigPath()
+        {
+            var result = CommandLineParser.Parse(With("-s", @"C:\in\applicationHost.config", "-c", @"C:\out\a.config"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Options.SourceConfigPath, Is.EqualTo(@"C:\in\applicationHost.config"));
+                Assert.That(result.Options.ConfigPath, Is.EqualTo(@"C:\out\a.config"));
+            });
+        }
+
         [Test]
         public void Parse_ConfigPath_IsMadeAbsolute()
         {
@@ -508,6 +570,7 @@ namespace IISAppCmd.Tests
             {
                 "--bitness=32", "-t", "net48", "-ap", ApplicationJson, "--port", "8080",
                 "-gm=" + GlobalModuleJson, "--customconfig", CustomConfigJson, "--config", @"C:\temp\a.config",
+                "-s=C:\\temp\\template.config",
             });
 
             Assert.That(result.Error, Is.Null);
@@ -522,6 +585,7 @@ namespace IISAppCmd.Tests
                 Assert.That(result.Options.GlobalModuleImage, Is.EqualTo("C:/modules/my.dll"));
                 Assert.That(result.Options.CustomConfigOptions, Is.EqualTo("tenant=abc,loglevelcon=info"));
                 Assert.That(result.Options.ConfigPath, Is.EqualTo(@"C:\temp\a.config"));
+                Assert.That(result.Options.SourceConfigPath, Is.EqualTo(@"C:\temp\template.config"));
             });
         }
 
@@ -529,6 +593,7 @@ namespace IISAppCmd.Tests
         [TestCase("-t", "net8.0", "-t=net9.0", null, "--tfm")]
         [TestCase("-p", "8080", "--port", "8081", "--port")]
         [TestCase("-c", "a.config", "--config", "b.config", "--config")]
+        [TestCase("-s", "a.config", "--source", "b.config", "--source")]
         public void Parse_DuplicateOption_Fails(string first, string firstValue, string second, string secondValue, string canonical)
         {
             var args = secondValue == null
@@ -601,6 +666,7 @@ namespace IISAppCmd.Tests
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--bitness"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--tfm"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--port"));
+                Assert.That(CommandLineParser.HelpText, Does.Contain("--source"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--config"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--help"));
             });
