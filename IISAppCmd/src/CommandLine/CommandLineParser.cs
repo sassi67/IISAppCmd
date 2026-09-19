@@ -18,7 +18,7 @@ namespace IISAppCmd.CommandLine
 into a copy of applicationHost.config.
 
 Usage:
-  IISAppCmd -ap <json> [-gm <json>] [-cc <json>] [-b <32|64>] [-t <tfm>] [-p <port>] [-c <path>]
+  IISAppCmd -ap <json> [-gm <json>] [-cc <json>] [-b <32|64>] [-t <tfm>] [-p <port>] [-s <path>] [-c <path>]
 
 Options:
   -ap,  --application  <json>   Application the site serves, as
@@ -31,6 +31,9 @@ Options:
   -b,   --bitness      <32|64>  Bitness of the worker process. Default 64.
   -t,   --tfm          <tfm>    Framework the application targets. Default netcoreapp3.1.
   -p,   --port         <number> Port the site listens on, 1-65535. Default 5001.
+  -s,   --source       <path>   The applicationHost.config copied to the working
+                                location. Default: the bundled
+                                Resources\applicationHost.config.
   -c,   --config       <path>   Where the working copy of applicationHost.config is
                                 written. Default %TEMP%\iisconfig\applicationhost-<id>.config.
   -h,   --help                  Show this help text.
@@ -51,11 +54,13 @@ the image are required; without a preCondition the bitness of the run supplies
 one. The image is kept as written, so it may name its DLL through an
 environment variable such as %windir%.
 
---customconfig carries the custom section Resources\IISAgentConfigSchema.xml
-defines for a module: the options the agent is given, and the application pool
-they apply to. Only the options are required; without an appPool the pool this
-run creates is the one they apply to. The section is written inside the entry
-the module has in <modules>, so it only makes sense next to --globalmodule.
+--customconfig carries the custom section of the IIS agent: the options the
+agent is given, and the application pool they apply to. Only the options are
+required; without an appPool the pool this run creates is the one they apply
+to. The section is written inside the entry the module has in <modules>, so it
+only makes sense next to --globalmodule. Its schema has to be installed in
+%windir%\system32\inetsrv\config\schema for the IIS configuration system to
+know it; without it the section is written as plain XML instead.
 
 --bitness decides whether the pool runs 32-bit (enable32BitAppOnWin64) or
 64-bit, and which preCondition a global module without one is given,
@@ -66,15 +71,20 @@ netstandard* and net5.0 or later, v4.0 for net4x, v2.0 for anything older.
 
 --port decides the binding of the site, which always listens on localhost.
 
-The bundled Resources\applicationHost.config is copied to the working
-location first, so the original is never touched. The copy must not exist
-yet; an existing file is never overwritten.
+--source names the applicationHost.config this run starts from, usually the
+one of an installed IIS Express. It is copied to the working location first,
+so the original is never touched. Without it the bundled
+Resources\applicationHost.config next to the executable is used, which is
+what a local build has; a deployed copy of the tool ships without it and
+needs --source. The working copy must not exist yet; an existing file is
+never overwritten.
 
 Examples:
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -t net10.0
   IISAppCmd --application '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' --port 8080
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -b 32 -t net48
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -c C:\temp\a.config
+  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -s C:\iisexpress\AppServer\applicationHost.config
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -gm '{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}'
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -gm '{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}' -cc '{""options"": ""tenant=abc,loglevelcon=info""}'";
 
@@ -92,6 +102,7 @@ Examples:
             string application = null;
             string globalModule = null;
             string customConfig = null;
+            string source = null;
             string config = null;
 
             for (int i = 0; i < args.Length; i++)
@@ -134,6 +145,10 @@ Examples:
                     case "cc":
                     case "customconfig":
                         canonical = "customconfig";
+                        break;
+                    case "s":
+                    case "source":
+                        canonical = "source";
                         break;
                     case "c":
                     case "config":
@@ -178,6 +193,9 @@ Examples:
                         break;
                     case "customconfig":
                         duplicate = Assign(ref customConfig, value);
+                        break;
+                    case "source":
+                        duplicate = Assign(ref source, value);
                         break;
                     default:
                         duplicate = Assign(ref config, value);
@@ -269,6 +287,19 @@ Examples:
                 }
             }
 
+            // Only the shape of the path is checked here. Whether the file is
+            // actually there is left to the copy, so that a missing source is a
+            // configuration error rather than a usage error.
+            if (source != null)
+            {
+                if (!TryMakeAbsolute(source, out string absoluteSource, out string sourceError))
+                {
+                    return ParseResult.Fail($"invalid source path '{source.Trim()}': {sourceError}");
+                }
+
+                source = absoluteSource;
+            }
+
             if (config != null)
             {
                 if (!TryMakeAbsolute(config, out string absoluteConfig, out string configError))
@@ -293,6 +324,7 @@ Examples:
                 GlobalModulePreCondition = modulePreCondition,
                 CustomConfigOptions = customOptions,
                 CustomConfigAppPool = customAppPool,
+                SourceConfigPath = source,
                 ConfigPath = config,
             });
         }

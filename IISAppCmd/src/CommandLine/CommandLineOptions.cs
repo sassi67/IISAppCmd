@@ -75,6 +75,13 @@
         public string CustomConfigAppPool { get; set; }
 
         /// <summary>
+        /// The applicationHost.config copied to the working location, taken
+        /// from --source and made absolute. Null when the option was not given,
+        /// in which case the bundled Resources\applicationHost.config is used.
+        /// </summary>
+        public string SourceConfigPath { get; set; }
+
+        /// <summary>
         /// Where the working copy of applicationHost.config is written. Null
         /// when --config was not given, in which case the default scratch
         /// location is used.
