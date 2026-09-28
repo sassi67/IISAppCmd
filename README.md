@@ -5,8 +5,9 @@ A .NET Framework console application which modifies an IIS configuration file.
 It copies an `applicationHost.config` to a working location and writes an
 application pool, the site that runs in it and, when asked for one, a native
 global module with the custom section of the IIS agent into the copy, using the
-same command-line syntax as the `iisexpressstarter` reference tool. The original
-is never touched.
+same command-line syntax as the `iisexpressstarter` reference tool. It can also
+set the server-wide caching, request filtering and directory browsing sections,
+as `appcmd set config` would. The original is never touched.
 
 ## Requirements
 
@@ -44,7 +45,7 @@ The id and the version are lower-cased in that URL.
 ## Usage
 
 ```
-IISAppCmd -ap <json> [-gm <json>] [-cc <json>] [-b <32|64>] [-t <tfm>] [-p <port>] [-s <path>] [-c <path>]
+IISAppCmd -ap <json> [-gm <json>] [-cc <json>] [-ca <json>] [-rf <json>] [-db <json>] [-b <32|64>] [-t <tfm>] [-p <port>] [-s <path>] [-c <path>]
 ```
 
 | Option | | Meaning |
@@ -52,6 +53,9 @@ IISAppCmd -ap <json> [-gm <json>] [-cc <json>] [-b <32|64>] [-t <tfm>] [-p <port
 | `-ap` | `--application` | Application the site serves, as `{"name": "...", "path": "..."}`. **Required.** Its path is served from the root of the site. |
 | `-gm` | `--globalmodule` | Native module to register, as `{"name": "...", "image": "...", "preCondition": "..."}`. Only then is one written. |
 | `-cc` | `--customconfig` | Custom section that module gets, as `{"appPool": "...", "options": "..."}`. Needs `--globalmodule`. |
+| `-ca` | `--caching` | Output caching, as `{"enabled": true, "enableKernelCache": false}`. |
+| `-rf` | `--requestfiltering` | Request filtering, as `{"removeServerHeader": true}`. |
+| `-db` | `--directorybrowse` | Directory browsing, as `{"enabled": false}`. |
 | `-b` | `--bitness` | Bitness of the worker process, `32` or `64`. Default `64`. |
 | `-t` | `--tfm` | Framework the application targets. Default `netcoreapp3.1`. |
 | `-p` | `--port` | Port the site listens on, 1-65535. Default `5001`. |
@@ -128,6 +132,24 @@ routes: if `IISAgentConfigSchema.xml` is installed in
 `Microsoft.Web.Administration` with everything else; otherwise the tool edits the
 XML directly after the commit. Either way the result is the same, but nothing may
 open the file through `Microsoft.Web.Administration` after the second route.
+
+### Server-wide settings
+
+`--caching`, `--requestfiltering` and `--directorybrowse` each do what one
+`appcmd set config` without a path does: they set their section at the root of
+the file, so it applies to every site.
+
+| Option | `appcmd` equivalent |
+| --- | --- |
+| `--caching` | `appcmd set config /section:system.webServer/caching /enabled:<bool> /enableKernelCache:<bool>` |
+| `--requestfiltering` | `appcmd set config /section:system.webServer/security/requestFiltering /removeServerHeader:<bool>` |
+| `--directorybrowse` | `appcmd set config /section:directoryBrowse /enabled:<bool>` |
+
+Every member is optional, but at least one has to be given, as a JSON `true` or
+`false`; an attribute left out keeps the value the file already has. A member the
+section does not have is a usage error rather than being ignored, so a misspelt
+attribute cannot pass for one that was set. `removeServerHeader` needs the schema
+of IIS 10 or later; on an older one the run fails with exit code 3.
 
 ## Calling it from another application
 

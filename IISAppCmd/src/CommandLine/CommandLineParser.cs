@@ -14,11 +14,12 @@ namespace IISAppCmd.CommandLine
     public static class CommandLineParser
     {
         public const string HelpText =
-@"IISAppCmd - writes an application pool, a site and an optional global module
-into a copy of applicationHost.config.
+@"IISAppCmd - writes an application pool, a site, an optional global module and
+optional server-wide settings into a copy of applicationHost.config.
 
 Usage:
-  IISAppCmd -ap <json> [-gm <json>] [-cc <json>] [-b <32|64>] [-t <tfm>] [-p <port>] [-s <path>] [-c <path>]
+  IISAppCmd -ap <json> [-gm <json>] [-cc <json>] [-ca <json>] [-rf <json>] [-db <json>]
+            [-b <32|64>] [-t <tfm>] [-p <port>] [-s <path>] [-c <path>]
 
 Options:
   -ap,  --application  <json>   Application the site serves, as
@@ -28,6 +29,13 @@ Options:
   -cc,  --customconfig <json>   Custom section of that module, as
                                 {""appPool"": ""..."", ""options"": ""...""}.
                                 Needs --globalmodule.
+  -ca,  --caching      <json>   Output caching, as {""enabled"": true|false,
+                                ""enableKernelCache"": true|false}.
+  -rf,  --requestfiltering <json>
+                                Request filtering, as
+                                {""removeServerHeader"": true|false}.
+  -db,  --directorybrowse <json>
+                                Directory browsing, as {""enabled"": true|false}.
   -b,   --bitness      <32|64>  Bitness of the worker process. Default 64.
   -t,   --tfm          <tfm>    Framework the application targets. Default netcoreapp3.1.
   -p,   --port         <number> Port the site listens on, 1-65535. Default 5001.
@@ -62,6 +70,18 @@ only makes sense next to --globalmodule. Its schema has to be installed in
 %windir%\system32\inetsrv\config\schema for the IIS configuration system to
 know it; without it the section is written as plain XML instead.
 
+--caching, --requestfiltering and --directorybrowse each do what one
+""appcmd set config"" without a path does, setting their section at the root of
+the file, for every site:
+  --caching           /section:system.webServer/caching
+                      /enabled:<bool> /enableKernelCache:<bool>
+  --requestfiltering  /section:system.webServer/security/requestFiltering
+                      /removeServerHeader:<bool>
+  --directorybrowse   /section:directoryBrowse /enabled:<bool>
+Every member is optional, but at least one has to be given, as a JSON true or
+false; an attribute left out keeps the value the file already has.
+removeServerHeader needs the schema of IIS 10 or later.
+
 --bitness decides whether the pool runs 32-bit (enable32BitAppOnWin64) or
 64-bit, and which preCondition a global module without one is given,
 bitness32 or bitness64.
@@ -86,11 +106,21 @@ Examples:
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -c C:\temp\a.config
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -s C:\iisexpress\AppServer\applicationHost.config
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -gm '{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}'
-  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -gm '{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}' -cc '{""options"": ""tenant=abc,loglevelcon=info""}'";
+  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -gm '{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}' -cc '{""options"": ""tenant=abc,loglevelcon=info""}'
+  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -ca '{""enabled"": false, ""enableKernelCache"": false}' -rf '{""removeServerHeader"": true}' -db '{""enabled"": true}'";
 
         private static readonly Regex TfmPattern = new Regex(
             @"^(net\d+\.\d+(-[a-z][a-z0-9.]*)?|net\d{2,3}|netcoreapp\d+\.\d+|netstandard\d+\.\d+)$",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        /// <summary>The attributes of system.webServer/caching --caching may set.</summary>
+        private static readonly string[] CachingAttributes = { "enabled", "enableKernelCache" };
+
+        /// <summary>The attributes of system.webServer/security/requestFiltering --requestfiltering may set.</summary>
+        private static readonly string[] RequestFilteringAttributes = { "removeServerHeader" };
+
+        /// <summary>The attributes of system.webServer/directoryBrowse --directorybrowse may set.</summary>
+        private static readonly string[] DirectoryBrowseAttributes = { "enabled" };
 
         public static ParseResult Parse(string[] args)
         {
@@ -102,6 +132,9 @@ Examples:
             string application = null;
             string globalModule = null;
             string customConfig = null;
+            string caching = null;
+            string requestFiltering = null;
+            string directoryBrowse = null;
             string source = null;
             string config = null;
 
@@ -145,6 +178,18 @@ Examples:
                     case "cc":
                     case "customconfig":
                         canonical = "customconfig";
+                        break;
+                    case "ca":
+                    case "caching":
+                        canonical = "caching";
+                        break;
+                    case "rf":
+                    case "requestfiltering":
+                        canonical = "requestfiltering";
+                        break;
+                    case "db":
+                    case "directorybrowse":
+                        canonical = "directorybrowse";
                         break;
                     case "s":
                     case "source":
@@ -193,6 +238,15 @@ Examples:
                         break;
                     case "customconfig":
                         duplicate = Assign(ref customConfig, value);
+                        break;
+                    case "caching":
+                        duplicate = Assign(ref caching, value);
+                        break;
+                    case "requestfiltering":
+                        duplicate = Assign(ref requestFiltering, value);
+                        break;
+                    case "directorybrowse":
+                        duplicate = Assign(ref directoryBrowse, value);
                         break;
                     case "source":
                         duplicate = Assign(ref source, value);
@@ -261,6 +315,44 @@ Examples:
                 }
             }
 
+            bool? cachingEnabled = null;
+            bool? cachingEnableKernelCache = null;
+
+            if (caching != null)
+            {
+                if (!ReadInlineFlags("--caching", caching, CachingAttributes, out Dictionary<string, bool> flags, out string cachingError))
+                {
+                    return ParseResult.Fail(cachingError);
+                }
+
+                cachingEnabled = Flag(flags, "enabled");
+                cachingEnableKernelCache = Flag(flags, "enableKernelCache");
+            }
+
+            bool? removeServerHeader = null;
+
+            if (requestFiltering != null)
+            {
+                if (!ReadInlineFlags("--requestfiltering", requestFiltering, RequestFilteringAttributes, out Dictionary<string, bool> flags, out string filteringError))
+                {
+                    return ParseResult.Fail(filteringError);
+                }
+
+                removeServerHeader = Flag(flags, "removeServerHeader");
+            }
+
+            bool? directoryBrowseEnabled = null;
+
+            if (directoryBrowse != null)
+            {
+                if (!ReadInlineFlags("--directorybrowse", directoryBrowse, DirectoryBrowseAttributes, out Dictionary<string, bool> flags, out string browseError))
+                {
+                    return ParseResult.Fail(browseError);
+                }
+
+                directoryBrowseEnabled = Flag(flags, "enabled");
+            }
+
             if (bitness != null && bitness != "32" && bitness != "64")
             {
                 return ParseResult.Fail($"invalid bitness '{bitness}': expected '32' or '64'.");
@@ -324,6 +416,10 @@ Examples:
                 GlobalModulePreCondition = modulePreCondition,
                 CustomConfigOptions = customOptions,
                 CustomConfigAppPool = customAppPool,
+                CachingEnabled = cachingEnabled,
+                CachingEnableKernelCache = cachingEnableKernelCache,
+                RequestFilteringRemoveServerHeader = removeServerHeader,
+                DirectoryBrowseEnabled = directoryBrowseEnabled,
                 SourceConfigPath = source,
                 ConfigPath = config,
             });
@@ -483,6 +579,62 @@ Examples:
             error = string.Empty;
             return true;
         }
+
+        /// <summary>
+        /// Reads the inline value of --caching, --requestfiltering or
+        /// --directorybrowse: a JSON object of boolean attributes, standing in
+        /// for the /attribute:value pairs of one "appcmd set config". Every
+        /// member is optional, but at least one has to be there, and a member
+        /// the section does not have is refused rather than ignored, so that a
+        /// misspelt attribute cannot pass for one that was set.
+        /// </summary>
+        private static bool ReadInlineFlags(string option, string value, string[] attributes, out Dictionary<string, bool> flags, out string error)
+        {
+            flags = new Dictionary<string, bool>(StringComparer.Ordinal);
+
+            string expected = string.Join(", ", Array.ConvertAll(attributes, a => $"'{a}'"));
+            object parsed;
+
+            try
+            {
+                parsed = new JavaScriptSerializer().DeserializeObject(value);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
+            {
+                error = $"{option} is not valid JSON: {ex.Message}";
+                return false;
+            }
+
+            if (!(parsed is Dictionary<string, object> members) || members.Count == 0)
+            {
+                error = $"{option} expects a JSON object with at least one of {expected}.";
+                return false;
+            }
+
+            foreach (KeyValuePair<string, object> member in members)
+            {
+                if (Array.IndexOf(attributes, member.Key) < 0)
+                {
+                    error = $"{option} has an unknown member '{member.Key}': expected {expected}.";
+                    return false;
+                }
+
+                if (!(member.Value is bool flag))
+                {
+                    error = $"{option} expects '{member.Key}' to be true or false.";
+                    return false;
+                }
+
+                flags[member.Key] = flag;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        /// <summary>The value the object gave that attribute, or null when it left it out.</summary>
+        private static bool? Flag(IDictionary<string, bool> flags, string attribute) =>
+            flags.TryGetValue(attribute, out bool flag) ? flag : (bool?)null;
 
         private static bool TryReadText(IDictionary<string, object> members, string property, out string text)
         {

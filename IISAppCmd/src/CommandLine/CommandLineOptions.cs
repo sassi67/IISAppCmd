@@ -75,6 +75,32 @@
         public string CustomConfigAppPool { get; set; }
 
         /// <summary>
+        /// The enabled attribute of system.webServer/caching, taken from
+        /// --caching. Null when the value did not set it, in which case the
+        /// attribute is left as it was.
+        /// </summary>
+        public bool? CachingEnabled { get; set; }
+
+        /// <summary>
+        /// The enableKernelCache attribute of system.webServer/caching, taken
+        /// from --caching. Null when the value did not set it.
+        /// </summary>
+        public bool? CachingEnableKernelCache { get; set; }
+
+        /// <summary>
+        /// The removeServerHeader attribute of
+        /// system.webServer/security/requestFiltering, taken from
+        /// --requestfiltering. Null when the option was not given.
+        /// </summary>
+        public bool? RequestFilteringRemoveServerHeader { get; set; }
+
+        /// <summary>
+        /// The enabled attribute of system.webServer/directoryBrowse, taken from
+        /// --directorybrowse. Null when the option was not given.
+        /// </summary>
+        public bool? DirectoryBrowseEnabled { get; set; }
+
+        /// <summary>
         /// The applicationHost.config copied to the working location, taken
         /// from --source and made absolute. Null when the option was not given,
         /// in which case the bundled Resources\applicationHost.config is used.
