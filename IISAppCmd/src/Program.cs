@@ -43,6 +43,9 @@ namespace IISAppCmd
             Console.WriteLine($"port        : {options.Port}");
             Console.WriteLine($"module      : {options.GlobalModule ?? "(none)"}");
             Console.WriteLine($"options     : {options.CustomConfigOptions ?? "(none)"}");
+            Console.WriteLine($"caching     : {Describe(options.CachingEnabled, options.CachingEnableKernelCache)}");
+            Console.WriteLine($"serverHeader: {Describe(options.RequestFilteringRemoveServerHeader)}");
+            Console.WriteLine($"dirBrowse   : {Describe(options.DirectoryBrowseEnabled)}");
             Console.WriteLine($"source      : {sourcePath}");
 
             if (!ApplicationHostConfig.CreateWorkingCopy(sourcePath, configPath, out string configError))
@@ -62,6 +65,10 @@ namespace IISAppCmd
             // The section goes into that module, and the parser only accepts
             // --customconfig next to --globalmodule.
             CustomConfig customConfig = module == null ? null : CustomConfigFactory.FromCommandLine(options, id);
+
+            // Null unless --caching, --requestfiltering or --directorybrowse
+            // asked for a server-wide section to be set.
+            ServerConfig serverConfig = ServerConfigFactory.FromCommandLine(options);
 
             if (!Directory.Exists(options.ApplicationPath))
             {
@@ -101,6 +108,17 @@ namespace IISAppCmd
                         }
                     }
 
+                    if (serverConfig != null)
+                    {
+                        var serverConfigBuilder = new ServerConfigBuilder(serverConfig, manager, configPath);
+
+                        if (!serverConfigBuilder.Build(out string serverConfigError))
+                        {
+                            Console.Error.WriteLine($"error: {serverConfigError}");
+                            return (int)ExitCode.ConfigurationError;
+                        }
+                    }
+
                     // Single commit point for every edit made to the copied configuration.
                     manager.CommitChanges();
                 }
@@ -134,7 +152,32 @@ namespace IISAppCmd
                 Console.WriteLine($"Added custom section: {customConfig.AppPool} -> {customConfig.Options}");
             }
 
+            if (serverConfig?.Caching != null)
+            {
+                Console.WriteLine($"Set caching: {Describe(serverConfig.Caching.Enabled, serverConfig.Caching.EnableKernelCache)}");
+            }
+
+            if (serverConfig?.RequestFiltering != null)
+            {
+                Console.WriteLine($"Set request filtering: removeServerHeader={Describe(serverConfig.RequestFiltering.RemoveServerHeader)}");
+            }
+
+            if (serverConfig?.DirectoryBrowse != null)
+            {
+                Console.WriteLine($"Set directory browsing: enabled={Describe(serverConfig.DirectoryBrowse.Enabled)}");
+            }
+
             return (int)ExitCode.Success;
         }
+
+        /// <summary>A flag as appcmd spells it, or "(unchanged)" when it is left as the file has it.</summary>
+        private static string Describe(bool? flag) =>
+            flag == null ? "(unchanged)" : flag.Value ? "true" : "false";
+
+        /// <summary>Both caching attributes, as they are set.</summary>
+        private static string Describe(bool? enabled, bool? enableKernelCache) =>
+            enabled == null && enableKernelCache == null
+                ? "(unchanged)"
+                : $"enabled={Describe(enabled)}, enableKernelCache={Describe(enableKernelCache)}";
     }
 }

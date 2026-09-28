@@ -17,6 +17,12 @@ namespace IISAppCmd.Tests
 
         private const string CustomConfigJson = @"{""options"": ""tenant=abc,loglevelcon=info""}";
 
+        private const string CachingJson = @"{""enabled"": false, ""enableKernelCache"": true}";
+
+        private const string RequestFilteringJson = @"{""removeServerHeader"": true}";
+
+        private const string DirectoryBrowseJson = @"{""enabled"": true}";
+
         [Test]
         public void Parse_OnlyApplication_UsesDefaults()
         {
@@ -36,6 +42,10 @@ namespace IISAppCmd.Tests
                 Assert.That(result.Options.GlobalModulePreCondition, Is.Null);
                 Assert.That(result.Options.CustomConfigOptions, Is.Null);
                 Assert.That(result.Options.CustomConfigAppPool, Is.Null);
+                Assert.That(result.Options.CachingEnabled, Is.Null);
+                Assert.That(result.Options.CachingEnableKernelCache, Is.Null);
+                Assert.That(result.Options.RequestFilteringRemoveServerHeader, Is.Null);
+                Assert.That(result.Options.DirectoryBrowseEnabled, Is.Null);
                 Assert.That(result.Options.SourceConfigPath, Is.Null);
                 Assert.That(result.Options.ConfigPath, Is.Null);
             });
@@ -378,6 +388,118 @@ namespace IISAppCmd.Tests
             Assert.That(result.Error, Is.EqualTo("option '--customconfig' was specified more than once."));
         }
 
+        [TestCase("-ca")]
+        [TestCase("--caching")]
+        [TestCase("--CACHING")]
+        public void Parse_Caching_ReadsBothAttributes(string option)
+        {
+            var result = CommandLineParser.Parse(With(option, CachingJson));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Options.CachingEnabled, Is.False);
+                Assert.That(result.Options.CachingEnableKernelCache, Is.True);
+            });
+        }
+
+        [Test]
+        public void Parse_Caching_EqualsSeparated()
+        {
+            var result = CommandLineParser.Parse(With("-ca=" + CachingJson));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.CachingEnabled, Is.False);
+        }
+
+        [Test]
+        public void Parse_Caching_AttributeLeftOut_StaysUnset()
+        {
+            var result = CommandLineParser.Parse(With("-ca", @"{""enableKernelCache"": false}"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Options.CachingEnabled, Is.Null, "an attribute left out keeps the value the file has");
+                Assert.That(result.Options.CachingEnableKernelCache, Is.False);
+            });
+        }
+
+        [TestCase("-rf", true)]
+        [TestCase("--requestfiltering", true)]
+        [TestCase("--requestfiltering", false)]
+        public void Parse_RequestFiltering_ReadsRemoveServerHeader(string option, bool value)
+        {
+            var result = CommandLineParser.Parse(With(option, $@"{{""removeServerHeader"": {value.ToString().ToLowerInvariant()}}}"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.RequestFilteringRemoveServerHeader, Is.EqualTo(value));
+        }
+
+        [TestCase("-db", true)]
+        [TestCase("--directorybrowse", true)]
+        [TestCase("--directorybrowse", false)]
+        public void Parse_DirectoryBrowse_ReadsEnabled(string option, bool value)
+        {
+            var result = CommandLineParser.Parse(With(option, $@"{{""enabled"": {value.ToString().ToLowerInvariant()}}}"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.DirectoryBrowseEnabled, Is.EqualTo(value));
+        }
+
+        [TestCase("--caching", "not json")]
+        [TestCase("--requestfiltering", @"{""removeServerHeader"": true,}")]
+        [TestCase("--directorybrowse", "{")]
+        public void Parse_SetConfig_InvalidJson_Fails(string option, string value)
+        {
+            var result = CommandLineParser.Parse(With(option, value));
+
+            Assert.That(result.Error, Does.StartWith($"{option} is not valid JSON"));
+        }
+
+        [TestCase("--caching", "{}", "'enabled', 'enableKernelCache'")]
+        [TestCase("--caching", "[true]", "'enabled', 'enableKernelCache'")]
+        [TestCase("--requestfiltering", "true", "'removeServerHeader'")]
+        [TestCase("--directorybrowse", @"""enabled""", "'enabled'")]
+        public void Parse_SetConfig_NotAnObjectWithMembers_Fails(string option, string value, string expected)
+        {
+            var result = CommandLineParser.Parse(With(option, value));
+
+            Assert.That(result.Error, Is.EqualTo($"{option} expects a JSON object with at least one of {expected}."));
+        }
+
+        [TestCase("--caching", @"{""enable"": true}", "enable", "'enabled', 'enableKernelCache'")]
+        [TestCase("--caching", @"{""Enabled"": true}", "Enabled", "'enabled', 'enableKernelCache'")]
+        [TestCase("--requestfiltering", @"{""removeServerHeader"": true, ""allowDoubleEscaping"": true}", "allowDoubleEscaping", "'removeServerHeader'")]
+        [TestCase("--directorybrowse", @"{""showFlags"": true}", "showFlags", "'enabled'")]
+        public void Parse_SetConfig_UnknownMember_Fails(string option, string value, string member, string expected)
+        {
+            var result = CommandLineParser.Parse(With(option, value));
+
+            Assert.That(result.Error, Is.EqualTo($"{option} has an unknown member '{member}': expected {expected}."));
+        }
+
+        [TestCase("--caching", @"{""enabled"": ""true""}", "enabled")]
+        [TestCase("--caching", @"{""enableKernelCache"": 1}", "enableKernelCache")]
+        [TestCase("--requestfiltering", @"{""removeServerHeader"": null}", "removeServerHeader")]
+        [TestCase("--directorybrowse", @"{""enabled"": ""yes""}", "enabled")]
+        public void Parse_SetConfig_NotABoolean_Fails(string option, string value, string member)
+        {
+            var result = CommandLineParser.Parse(With(option, value));
+
+            Assert.That(result.Error, Is.EqualTo($"{option} expects '{member}' to be true or false."));
+        }
+
+        [TestCase("-ca", CachingJson, "--caching", "--caching")]
+        [TestCase("-rf", RequestFilteringJson, "--requestfiltering", "--requestfiltering")]
+        [TestCase("-db", DirectoryBrowseJson, "--directorybrowse", "--directorybrowse")]
+        public void Parse_DuplicateSetConfig_Fails(string first, string value, string second, string canonical)
+        {
+            var result = CommandLineParser.Parse(With(first, value, second, value));
+
+            Assert.That(result.Error, Is.EqualTo($"option '{canonical}' was specified more than once."));
+        }
+
         [TestCase("-b", "32", Bitness.X86)]
         [TestCase("-b", "64", Bitness.X64)]
         [TestCase("--bitness", "32", Bitness.X86)]
@@ -570,7 +692,8 @@ namespace IISAppCmd.Tests
             {
                 "--bitness=32", "-t", "net48", "-ap", ApplicationJson, "--port", "8080",
                 "-gm=" + GlobalModuleJson, "--customconfig", CustomConfigJson, "--config", @"C:\temp\a.config",
-                "-s=C:\\temp\\template.config",
+                "-s=C:\\temp\\template.config", "--caching", CachingJson, "-rf=" + RequestFilteringJson,
+                "-db", DirectoryBrowseJson,
             });
 
             Assert.That(result.Error, Is.Null);
@@ -586,6 +709,10 @@ namespace IISAppCmd.Tests
                 Assert.That(result.Options.CustomConfigOptions, Is.EqualTo("tenant=abc,loglevelcon=info"));
                 Assert.That(result.Options.ConfigPath, Is.EqualTo(@"C:\temp\a.config"));
                 Assert.That(result.Options.SourceConfigPath, Is.EqualTo(@"C:\temp\template.config"));
+                Assert.That(result.Options.CachingEnabled, Is.False);
+                Assert.That(result.Options.CachingEnableKernelCache, Is.True);
+                Assert.That(result.Options.RequestFilteringRemoveServerHeader, Is.True);
+                Assert.That(result.Options.DirectoryBrowseEnabled, Is.True);
             });
         }
 
@@ -663,6 +790,9 @@ namespace IISAppCmd.Tests
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--application"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--globalmodule"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--customconfig"));
+                Assert.That(CommandLineParser.HelpText, Does.Contain("--caching"));
+                Assert.That(CommandLineParser.HelpText, Does.Contain("--requestfiltering"));
+                Assert.That(CommandLineParser.HelpText, Does.Contain("--directorybrowse"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--bitness"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--tfm"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--port"));
