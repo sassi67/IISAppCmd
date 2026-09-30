@@ -18,12 +18,25 @@ namespace IISAppCmd.CommandLine
 optional server-wide settings into a copy of applicationHost.config.
 
 Usage:
-  IISAppCmd -ap <json> [-gm <json>] [-cc <json>] [-ca <json>] [-rf <json>] [-db <json>]
+  IISAppCmd -ap <json> [-app <json>]... [-vd <json>]... [-gm <json>] [-cc <json>]
+            [-ca <json>] [-rf <json>] [-db <json>]
             [-b <32|64>] [-t <tfm>] [-p <port>] [-s <path>] [-c <path>]
 
 Options:
   -ap,  --application  <json>   Application the site serves, as
                                 {""name"": ""..."", ""path"": ""...""}. Required.
+  -app,                <json>   Additional application of the same site, as
+                                {""path"": ""..."", ""physicalPath"": ""..."",
+                                ""applicationPool"": ""...""}. May be repeated.
+                                Unlike --application's, its path is the URL
+                                path of the application, not its physical
+                                path; applicationPool is optional, and without
+                                one the pool this run creates is the one it
+                                runs in.
+  -vd,                 <json>   Additional virtual directory of an
+                                application added by --application or --app,
+                                as {""parentPath"": ""..."", ""path"": ""...."",
+                                ""physicalPath"": ""...""}. May be repeated.
   -gm,  --globalmodule <json>   Native module to register, as {""name"": ""..."",
                                 ""image"": ""..."", ""preCondition"": ""...""}.
   -cc,  --customconfig <json>   Custom section of that module, as
@@ -54,6 +67,15 @@ takes: the name labels the application, and the path is served as the physical
 path of the site's root virtual directory. The value is JSON, so it needs
 quoting for your shell: escape the inner quotes in cmd, or wrap the whole
 value in single quotes in PowerShell and bash.
+
+--app and --vd go beyond iisexpressstarter's own syntax, for sites that need
+more than the one root application --application gives: --app adds another
+application of the same site, at the URL path it names rather than at the
+root, with its own physical path and, optionally, its own application pool;
+--vd adds another virtual directory to an application already added by
+--application or --app, named by its parentPath. Both may be repeated, once
+per application or virtual directory wanted; a --vd whose parentPath names no
+application added so far is a configuration error.
 
 --globalmodule carries the same {""name"", ""image"", ""preCondition""} triple
 iisexpressstarter takes: the module is written to <globalModules> and enabled
@@ -107,7 +129,8 @@ Examples:
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -s C:\iisexpress\AppServer\applicationHost.config
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -gm '{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}'
   IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -gm '{""name"": ""MyModule"", ""image"": ""C:/modules/my.dll""}' -cc '{""options"": ""tenant=abc,loglevelcon=info""}'
-  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -ca '{""enabled"": false, ""enableKernelCache"": false}' -rf '{""removeServerHeader"": true}' -db '{""enabled"": true}'";
+  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/apps/scratch""}' -ca '{""enabled"": false, ""enableKernelCache"": false}' -rf '{""removeServerHeader"": true}' -db '{""enabled"": true}'
+  IISAppCmd -ap '{""name"": ""Scratch"", ""path"": ""C:/empty""}' -app '{""path"": ""/app2"", ""physicalPath"": ""C:/apps/app2""}' -vd '{""parentPath"": ""/"", ""path"": ""/jakarta"", ""physicalPath"": ""C:/isapi_redirect""}'";
 
         private static readonly Regex TfmPattern = new Regex(
             @"^(net\d+\.\d+(-[a-z][a-z0-9.]*)?|net\d{2,3}|netcoreapp\d+\.\d+|netstandard\d+\.\d+)$",
@@ -130,6 +153,8 @@ Examples:
             string tfm = null;
             string port = null;
             string application = null;
+            var appValues = new List<string>();
+            var vdValues = new List<string>();
             string globalModule = null;
             string customConfig = null;
             string caching = null;
@@ -170,6 +195,12 @@ Examples:
                     case "ap":
                     case "application":
                         canonical = "application";
+                        break;
+                    case "app":
+                        canonical = "app";
+                        break;
+                    case "vd":
+                        canonical = "vd";
                         break;
                     case "gm":
                     case "globalmodule":
@@ -216,6 +247,18 @@ Examples:
                 if (value.Length == 0)
                 {
                     return ParseResult.Fail($"option '{token}' requires a non-empty value.");
+                }
+
+                if (canonical == "app")
+                {
+                    appValues.Add(value);
+                    continue;
+                }
+
+                if (canonical == "vd")
+                {
+                    vdValues.Add(value);
+                    continue;
                 }
 
                 bool duplicate;
@@ -285,6 +328,50 @@ Examples:
             if (!TryMakeAbsolute(applicationPath, out string physicalPath, out string pathError))
             {
                 return ParseResult.Fail($"invalid application path '{applicationPath}': {pathError}");
+            }
+
+            var additionalApplications = new List<AdditionalApplication>();
+
+            foreach (string value in appValues)
+            {
+                if (!ReadInlineApp(value, out string appPath, out string appPhysicalPath, out string appPool, out string appError))
+                {
+                    return ParseResult.Fail(appError);
+                }
+
+                if (!TryMakeAbsolute(appPhysicalPath, out string absoluteAppPhysicalPath, out string appPathError))
+                {
+                    return ParseResult.Fail($"invalid --app physical path '{appPhysicalPath}': {appPathError}");
+                }
+
+                additionalApplications.Add(new AdditionalApplication
+                {
+                    Path = appPath,
+                    PhysicalPath = absoluteAppPhysicalPath,
+                    ApplicationPool = appPool,
+                });
+            }
+
+            var additionalVirtualDirectories = new List<AdditionalVirtualDirectory>();
+
+            foreach (string value in vdValues)
+            {
+                if (!ReadInlineVirtualDirectory(value, out string vdParentPath, out string vdPath, out string vdPhysicalPath, out string vdError))
+                {
+                    return ParseResult.Fail(vdError);
+                }
+
+                if (!TryMakeAbsolute(vdPhysicalPath, out string absoluteVdPhysicalPath, out string vdPathError))
+                {
+                    return ParseResult.Fail($"invalid --vd physical path '{vdPhysicalPath}': {vdPathError}");
+                }
+
+                additionalVirtualDirectories.Add(new AdditionalVirtualDirectory
+                {
+                    ParentPath = vdParentPath,
+                    Path = vdPath,
+                    PhysicalPath = absoluteVdPhysicalPath,
+                });
             }
 
             string moduleName = null;
@@ -410,6 +497,8 @@ Examples:
                 Tfm = tfm != null ? tfm.ToLowerInvariant() : CommandLineOptions.DefaultTfm,
                 Application = applicationName,
                 ApplicationPath = physicalPath,
+                AdditionalApplications = additionalApplications,
+                AdditionalVirtualDirectories = additionalVirtualDirectories,
                 Port = listeningPort,
                 GlobalModule = moduleName,
                 GlobalModuleImage = moduleImage,
@@ -462,6 +551,110 @@ Examples:
             if (!TryReadText(members, "path", out path))
             {
                 error = "--application is missing a non-empty 'path'.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        /// <summary>
+        /// Reads one --app value: an additional application beyond
+        /// --application, at its own URL path rather than at the root.
+        /// </summary>
+        private static bool ReadInlineApp(string value, out string path, out string physicalPath, out string applicationPool, out string error)
+        {
+            path = string.Empty;
+            physicalPath = string.Empty;
+            applicationPool = null;
+
+            object parsed;
+
+            try
+            {
+                parsed = new JavaScriptSerializer().DeserializeObject(value);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
+            {
+                error = $"--app is not valid JSON: {ex.Message}";
+                return false;
+            }
+
+            if (!(parsed is Dictionary<string, object> members))
+            {
+                error = "--app expects a JSON object with a 'path' and a 'physicalPath'.";
+                return false;
+            }
+
+            if (!TryReadText(members, "path", out path))
+            {
+                error = "--app is missing a non-empty 'path'.";
+                return false;
+            }
+
+            if (!TryReadText(members, "physicalPath", out physicalPath))
+            {
+                error = "--app is missing a non-empty 'physicalPath'.";
+                return false;
+            }
+
+            // The pool is optional: without one the pool this run creates is
+            // the one the application runs in, so only a present-but-empty
+            // value is a mistake.
+            if (members.ContainsKey("applicationPool") && !TryReadText(members, "applicationPool", out applicationPool))
+            {
+                error = "--app has an empty 'applicationPool'.";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        /// <summary>
+        /// Reads one --vd value: an additional virtual directory of an
+        /// application added by --application or --app, named by its
+        /// parentPath.
+        /// </summary>
+        private static bool ReadInlineVirtualDirectory(string value, out string parentPath, out string path, out string physicalPath, out string error)
+        {
+            parentPath = string.Empty;
+            path = string.Empty;
+            physicalPath = string.Empty;
+
+            object parsed;
+
+            try
+            {
+                parsed = new JavaScriptSerializer().DeserializeObject(value);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
+            {
+                error = $"--vd is not valid JSON: {ex.Message}";
+                return false;
+            }
+
+            if (!(parsed is Dictionary<string, object> members))
+            {
+                error = "--vd expects a JSON object with a 'parentPath', a 'path' and a 'physicalPath'.";
+                return false;
+            }
+
+            if (!TryReadText(members, "parentPath", out parentPath))
+            {
+                error = "--vd is missing a non-empty 'parentPath'.";
+                return false;
+            }
+
+            if (!TryReadText(members, "path", out path))
+            {
+                error = "--vd is missing a non-empty 'path'.";
+                return false;
+            }
+
+            if (!TryReadText(members, "physicalPath", out physicalPath))
+            {
+                error = "--vd is missing a non-empty 'physicalPath'.";
                 return false;
             }
 

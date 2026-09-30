@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using IISAppCmd.CommandLine;
 using IISAppCmd.IIS;
 using NUnit.Framework;
@@ -75,6 +76,101 @@ namespace IISAppCmd.Tests
                 Assert.That(() => SiteFactory.FromCommandLine(null, "abc12345"), Throws.ArgumentNullException);
                 Assert.That(() => SiteFactory.FromCommandLine(Options(), ""), Throws.ArgumentException);
                 Assert.That(() => SiteFactory.FromCommandLine(Options(), null), Throws.ArgumentException);
+            });
+        }
+
+        [Test]
+        public void FromCommandLine_AddsOneApplicationPerAdditionalApplication()
+        {
+            var options = Options();
+            options.AdditionalApplications.Add(new AdditionalApplication
+            {
+                Path = "/second",
+                PhysicalPath = @"C:\apps\second",
+                ApplicationPool = "SecondPool",
+            });
+            options.AdditionalApplications.Add(new AdditionalApplication
+            {
+                Path = "/third",
+                PhysicalPath = @"C:\apps\third",
+            });
+
+            Site site = SiteFactory.FromCommandLine(options, "abc12345");
+
+            Assert.That(site.Applications.Count, Is.EqualTo(3));
+
+            SiteApplication second = site.Applications[1];
+            SiteApplication third = site.Applications[2];
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(second.Path, Is.EqualTo("/second"));
+                Assert.That(second.ApplicationPool, Is.EqualTo("SecondPool"));
+                Assert.That(second.VirtualDirectories.Single().Path, Is.EqualTo("/second"));
+                Assert.That(second.VirtualDirectories.Single().PhysicalPath, Is.EqualTo(@"C:\apps\second"));
+                Assert.That(third.ApplicationPool, Is.Null, "the pool is filled in by the builder when --app names none");
+                Assert.That(third.VirtualDirectories.Single().PhysicalPath, Is.EqualTo(@"C:\apps\third"));
+            });
+        }
+
+        [Test]
+        public void TryAttachVirtualDirectories_AttachesEachToTheApplicationItsParentPathNames()
+        {
+            var options = Options();
+            options.AdditionalApplications.Add(new AdditionalApplication { Path = "/second", PhysicalPath = @"C:\apps\second" });
+            options.AdditionalVirtualDirectories.Add(new AdditionalVirtualDirectory
+            {
+                ParentPath = "/",
+                Path = "/jakarta",
+                PhysicalPath = @"C:\apps\jakarta",
+            });
+            options.AdditionalVirtualDirectories.Add(new AdditionalVirtualDirectory
+            {
+                ParentPath = "/second",
+                Path = "/second/extra",
+                PhysicalPath = @"C:\apps\second\extra",
+            });
+
+            Site site = SiteFactory.FromCommandLine(options, "abc12345");
+
+            Assert.That(SiteFactory.TryAttachVirtualDirectories(site, options, out string error), Is.True);
+            Assert.That(error, Is.Empty);
+
+            SiteApplication root = site.Applications[0];
+            SiteApplication second = site.Applications[1];
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(root.VirtualDirectories.Select(d => d.Path), Is.EqualTo(new[] { "/", "/jakarta" }));
+                Assert.That(root.VirtualDirectories.Last().PhysicalPath, Is.EqualTo(@"C:\apps\jakarta"));
+                Assert.That(second.VirtualDirectories.Select(d => d.Path), Is.EqualTo(new[] { "/second", "/second/extra" }));
+            });
+        }
+
+        [Test]
+        public void TryAttachVirtualDirectories_FailsWhenTheParentPathNamesNoApplication()
+        {
+            var options = Options();
+            options.AdditionalVirtualDirectories.Add(new AdditionalVirtualDirectory
+            {
+                ParentPath = "/no-such-app",
+                Path = "/jakarta",
+                PhysicalPath = @"C:\apps\jakarta",
+            });
+
+            Site site = SiteFactory.FromCommandLine(options, "abc12345");
+
+            Assert.That(SiteFactory.TryAttachVirtualDirectories(site, options, out string error), Is.False);
+            Assert.That(error, Does.Contain("/no-such-app"));
+        }
+
+        [Test]
+        public void TryAttachVirtualDirectories_RejectsMissingArguments()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(() => SiteFactory.TryAttachVirtualDirectories(null, Options(), out _), Throws.ArgumentNullException);
+                Assert.That(() => SiteFactory.TryAttachVirtualDirectories(SiteFactory.FromCommandLine(Options(), "abc12345"), null, out _), Throws.ArgumentNullException);
             });
         }
 

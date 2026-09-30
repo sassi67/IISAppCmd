@@ -1,10 +1,34 @@
-﻿namespace IISAppCmd.CommandLine
+﻿using System.Collections.Generic;
+
+namespace IISAppCmd.CommandLine
 {
     /// <summary>Process bitness requested on the command line.</summary>
     public enum Bitness
     {
         X86 = 32,
         X64 = 64,
+    }
+
+    /// <summary>One entry of --app: an additional application beyond --application.</summary>
+    public sealed class AdditionalApplication
+    {
+        public string Path { get; set; }
+
+        public string PhysicalPath { get; set; }
+
+        /// <summary>Null when the value named none, in which case the pool this run creates is the one it runs in.</summary>
+        public string ApplicationPool { get; set; }
+    }
+
+    /// <summary>One entry of --vd: an additional virtual directory of an application added by --application or --app.</summary>
+    public sealed class AdditionalVirtualDirectory
+    {
+        /// <summary>Path of the application it is added to.</summary>
+        public string ParentPath { get; set; }
+
+        public string Path { get; set; }
+
+        public string PhysicalPath { get; set; }
     }
 
     /// <summary>The validated set of options the tool was invoked with.</summary>
@@ -35,6 +59,19 @@
         /// absolute.
         /// </summary>
         public string ApplicationPath { get; set; }
+
+        /// <summary>
+        /// Additional applications beyond the required one, taken from --app;
+        /// empty when the option was not given.
+        /// </summary>
+        public List<AdditionalApplication> AdditionalApplications { get; set; } = new List<AdditionalApplication>();
+
+        /// <summary>
+        /// Additional virtual directories to attach to an application added by
+        /// --application or --app, taken from --vd; empty when the option was
+        /// not given.
+        /// </summary>
+        public List<AdditionalVirtualDirectory> AdditionalVirtualDirectories { get; set; } = new List<AdditionalVirtualDirectory>();
 
         /// <summary>Port the site binds to.</summary>
         public int Port { get; set; } = DefaultPort;

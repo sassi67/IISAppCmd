@@ -59,6 +59,12 @@ namespace IISAppCmd
             IIS.ApplicationPool pool = ApplicationPoolFactory.FromCommandLine(options, id);
             IIS.Site site = SiteFactory.FromCommandLine(options, id);
 
+            if (!SiteFactory.TryAttachVirtualDirectories(site, options, out string vdError))
+            {
+                Console.Error.WriteLine($"error: {vdError}");
+                return (int)ExitCode.ConfigurationError;
+            }
+
             // Null unless --globalmodule asked for one.
             GlobalModule module = GlobalModuleFactory.FromCommandLine(options);
 
@@ -70,9 +76,15 @@ namespace IISAppCmd
             // asked for a server-wide section to be set.
             ServerConfig serverConfig = ServerConfigFactory.FromCommandLine(options);
 
-            if (!Directory.Exists(options.ApplicationPath))
+            foreach (SiteApplication application in site.Applications)
             {
-                Console.Error.WriteLine($"warning: the physical path '{options.ApplicationPath}' does not exist.");
+                foreach (SiteVirtualDirectory directory in application.VirtualDirectories)
+                {
+                    if (!Directory.Exists(directory.PhysicalPath))
+                    {
+                        Console.Error.WriteLine($"warning: the physical path '{directory.PhysicalPath}' does not exist.");
+                    }
+                }
             }
 
             GlobalModuleBuilder moduleBuilder = null;
@@ -141,6 +153,14 @@ namespace IISAppCmd
 
             Console.WriteLine($"Added application pool: {pool.Name}");
             Console.WriteLine($"Added site: {site.Name} -> http://localhost:{options.Port}/");
+
+            foreach (SiteApplication application in site.Applications)
+            {
+                foreach (SiteVirtualDirectory directory in application.VirtualDirectories)
+                {
+                    Console.WriteLine($"  application '{application.Path}': virtual directory '{directory.Path}' -> {directory.PhysicalPath}");
+                }
+            }
 
             if (module != null)
             {

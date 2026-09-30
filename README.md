@@ -45,12 +45,14 @@ The id and the version are lower-cased in that URL.
 ## Usage
 
 ```
-IISAppCmd -ap <json> [-gm <json>] [-cc <json>] [-ca <json>] [-rf <json>] [-db <json>] [-b <32|64>] [-t <tfm>] [-p <port>] [-s <path>] [-c <path>]
+IISAppCmd -ap <json> [-app <json>]... [-vd <json>]... [-gm <json>] [-cc <json>] [-ca <json>] [-rf <json>] [-db <json>] [-b <32|64>] [-t <tfm>] [-p <port>] [-s <path>] [-c <path>]
 ```
 
 | Option | | Meaning |
 | --- | --- | --- |
 | `-ap` | `--application` | Application the site serves, as `{"name": "...", "path": "..."}`. **Required.** Its path is served from the root of the site. |
+| `-app` | | Additional application of the same site, as `{"path": "...", "physicalPath": "...", "applicationPool": "..."}`. Unlike `-ap`'s, `path` is the application's URL path, not its physical path. `applicationPool` is optional. May be repeated. |
+| `-vd` | | Additional virtual directory of an application added by `-ap` or `-app`, as `{"parentPath": "...", "path": "...", "physicalPath": "..."}`, named by the `parentPath` of the application it attaches to. May be repeated. |
 | `-gm` | `--globalmodule` | Native module to register, as `{"name": "...", "image": "...", "preCondition": "..."}`. Only then is one written. |
 | `-cc` | `--customconfig` | Custom section that module gets, as `{"appPool": "...", "options": "..."}`. Needs `--globalmodule`. |
 | `-ca` | `--caching` | Output caching, as `{"enabled": true, "enableKernelCache": false}`. |
@@ -120,7 +122,7 @@ So a deployed call names both, one read and one written per run:
 | --- | --- |
 | `0` | Success. |
 | `1` | Usage error: an unknown option, a missing `--application`, a malformed path or JSON value. The help text is printed to stderr. |
-| `3` | Configuration error: the source configuration is missing, the destination already exists, or the IIS configuration system refused a write. |
+| `3` | Configuration error: the source configuration is missing, the destination already exists, a `-vd`'s `parentPath` names no application added by `-ap`/`-app`, or the IIS configuration system refused a write. |
 
 ### The custom section
 
