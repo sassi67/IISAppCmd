@@ -22,7 +22,7 @@ namespace IISAppCmd.IIS
             if (options == null) throw new ArgumentNullException(nameof(options));
             if (string.IsNullOrEmpty(id)) throw new ArgumentException("The run id must not be empty.", nameof(id));
 
-            return new Site
+            var site = new Site
             {
                 Name = NamePrefix + id,
                 ServerAutoStart = true,
@@ -52,6 +52,62 @@ namespace IISAppCmd.IIS
                     },
                 },
             };
+
+            // Each --app is another application of the same site, at its own
+            // URL path, with its own root virtual directory at that path.
+            foreach (AdditionalApplication application in options.AdditionalApplications)
+            {
+                site.Applications.Add(new SiteApplication
+                {
+                    Path = application.Path,
+                    ApplicationPool = application.ApplicationPool,
+                    VirtualDirectories =
+                    {
+                        new SiteVirtualDirectory
+                        {
+                            Path = application.Path,
+                            PhysicalPath = application.PhysicalPath,
+                        },
+                    },
+                });
+            }
+
+            return site;
+        }
+
+        /// <summary>
+        /// Attaches every --vd to the application its parentPath names, added
+        /// to <paramref name="site"/> by --application or --app. Kept apart
+        /// from <see cref="FromCommandLine"/> so a parentPath naming no such
+        /// application is a configuration error, the way a rejected build is
+        /// elsewhere, rather than failing the site's construction itself.
+        /// </summary>
+        public static bool TryAttachVirtualDirectories(Site site, CommandLineOptions options, out string error)
+        {
+            if (site == null) throw new ArgumentNullException(nameof(site));
+            if (options == null) throw new ArgumentNullException(nameof(options));
+
+            foreach (AdditionalVirtualDirectory directory in options.AdditionalVirtualDirectories)
+            {
+                SiteApplication parent = site.Applications.Find(application =>
+                    string.Equals(application.Path, directory.ParentPath, StringComparison.OrdinalIgnoreCase));
+
+                if (parent == null)
+                {
+                    error = $"--vd names the application '{directory.ParentPath}', which the site does not have; "
+                        + "add it with --application or --app first.";
+                    return false;
+                }
+
+                parent.VirtualDirectories.Add(new SiteVirtualDirectory
+                {
+                    Path = directory.Path,
+                    PhysicalPath = directory.PhysicalPath,
+                });
+            }
+
+            error = string.Empty;
+            return true;
         }
 
         /// <summary>The site answers on localhost only, like the reference tool's.</summary>

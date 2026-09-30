@@ -48,6 +48,8 @@ namespace IISAppCmd.Tests
                 Assert.That(result.Options.DirectoryBrowseEnabled, Is.Null);
                 Assert.That(result.Options.SourceConfigPath, Is.Null);
                 Assert.That(result.Options.ConfigPath, Is.Null);
+                Assert.That(result.Options.AdditionalApplications, Is.Empty);
+                Assert.That(result.Options.AdditionalVirtualDirectories, Is.Empty);
             });
         }
 
@@ -782,12 +784,124 @@ namespace IISAppCmd.Tests
             Assert.That(result.Error, Is.EqualTo("option '--tfm=' requires a non-empty value."));
         }
 
+        private const string AppJson = @"{""path"": ""/second"", ""physicalPath"": ""C:/apps/second""}";
+
+        private const string VdJson = @"{""parentPath"": ""/"", ""path"": ""/jakarta"", ""physicalPath"": ""C:/apps/jakarta""}";
+
+        [Test]
+        public void Parse_App_AddsAnAdditionalApplication()
+        {
+            var result = CommandLineParser.Parse(With("-app", AppJson));
+
+            Assert.That(result.Error, Is.Null);
+            AdditionalApplication application = result.Options.AdditionalApplications.Single();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(application.Path, Is.EqualTo("/second"));
+                Assert.That(application.PhysicalPath, Is.EqualTo(@"C:\apps\second"));
+                Assert.That(application.ApplicationPool, Is.Null);
+            });
+        }
+
+        [Test]
+        public void Parse_App_ReadsTheOptionalApplicationPool()
+        {
+            var result = CommandLineParser.Parse(With("-app", @"{""path"": ""/second"", ""physicalPath"": ""C:/apps/second"", ""applicationPool"": ""SecondPool""}"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.AdditionalApplications.Single().ApplicationPool, Is.EqualTo("SecondPool"));
+        }
+
+        [Test]
+        public void Parse_App_MayBeRepeated()
+        {
+            var result = CommandLineParser.Parse(With(
+                "-app", AppJson,
+                "--app", @"{""path"": ""/third"", ""physicalPath"": ""C:/apps/third""}"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.AdditionalApplications.Select(a => a.Path), Is.EqualTo(new[] { "/second", "/third" }));
+        }
+
+        [Test]
+        public void Parse_App_InvalidJson_Fails()
+        {
+            var result = CommandLineParser.Parse(With("-app", "not json"));
+
+            Assert.That(result.Error, Does.StartWith("--app is not valid JSON"));
+        }
+
+        [Test]
+        public void Parse_App_NotAnObject_Fails()
+        {
+            var result = CommandLineParser.Parse(With("-app", "\"just a string\""));
+
+            Assert.That(result.Error, Is.EqualTo("--app expects a JSON object with a 'path' and a 'physicalPath'."));
+        }
+
+        [TestCase(@"{""physicalPath"": ""C:/apps/second""}", "path")]
+        [TestCase(@"{""path"": ""/second""}", "physicalPath")]
+        public void Parse_App_MissingMember_Fails(string value, string member)
+        {
+            var result = CommandLineParser.Parse(With("-app", value));
+
+            Assert.That(result.Error, Is.EqualTo($"--app is missing a non-empty '{member}'."));
+        }
+
+        [Test]
+        public void Parse_Vd_AddsAnAdditionalVirtualDirectory()
+        {
+            var result = CommandLineParser.Parse(With("-vd", VdJson));
+
+            Assert.That(result.Error, Is.Null);
+            AdditionalVirtualDirectory directory = result.Options.AdditionalVirtualDirectories.Single();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(directory.ParentPath, Is.EqualTo("/"));
+                Assert.That(directory.Path, Is.EqualTo("/jakarta"));
+                Assert.That(directory.PhysicalPath, Is.EqualTo(@"C:\apps\jakarta"));
+            });
+        }
+
+        [Test]
+        public void Parse_Vd_MayBeRepeated()
+        {
+            var result = CommandLineParser.Parse(With(
+                "-vd", VdJson,
+                "-vd", @"{""parentPath"": ""/"", ""path"": ""/other"", ""physicalPath"": ""C:/apps/other""}"));
+
+            Assert.That(result.Error, Is.Null);
+            Assert.That(result.Options.AdditionalVirtualDirectories.Select(d => d.Path), Is.EqualTo(new[] { "/jakarta", "/other" }));
+        }
+
+        [TestCase("not json")]
+        public void Parse_Vd_InvalidJson_Fails(string value)
+        {
+            var result = CommandLineParser.Parse(With("-vd", value));
+
+            Assert.That(result.Error, Does.StartWith("--vd is not valid JSON"));
+        }
+
+        [TestCase(@"{""path"": ""/jakarta"", ""physicalPath"": ""C:/apps/jakarta""}", "parentPath")]
+        [TestCase(@"{""parentPath"": ""/"", ""physicalPath"": ""C:/apps/jakarta""}", "path")]
+        [TestCase(@"{""parentPath"": ""/"", ""path"": ""/jakarta""}", "physicalPath")]
+        public void Parse_Vd_MissingMember_Fails(string value, string member)
+        {
+            var result = CommandLineParser.Parse(With("-vd", value));
+
+            Assert.That(result.Error, Is.EqualTo($"--vd is missing a non-empty '{member}'."));
+        }
+
         [Test]
         public void HelpText_MentionsEveryOption()
         {
             Assert.Multiple(() =>
             {
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--application"));
+                Assert.That(CommandLineParser.HelpText, Does.Contain("-app"));
+                Assert.That(CommandLineParser.HelpText, Does.Contain("-vd"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--globalmodule"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--customconfig"));
                 Assert.That(CommandLineParser.HelpText, Does.Contain("--caching"));
